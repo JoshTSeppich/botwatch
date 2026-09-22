@@ -13,9 +13,12 @@ const { join } = require('node:path');
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  // Taken from the build config rather than repeated here: two copies of an
+  // identifier that macOS keys permission grants on is one too many.
+  const id = context.packager.appInfo.id;
   execFileSync(
     'codesign',
-    ['--force', '--deep', '--sign', '-', '--identifier', 'io.aetherx.session-pill', app],
+    ['--force', '--deep', '--sign', '-', '--identifier', id, app],
     { stdio: 'inherit' },
   );
 };

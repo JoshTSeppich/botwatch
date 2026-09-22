@@ -16,10 +16,10 @@
   },
   "productName": "Session Pill",
   "license": "MIT",
-  "author": "Joshua Seppich",
+  "author": "Joshua Seppich <joshuatseppich@gmail.com>",
   "repository": "github.com/JoshTSeppich/session-pill",
   "build": {
-    "appId": "io.aetherx.session-pill",
+    "appId": "io.github.joshtseppich.session-pill",
     "productName": "Session Pill",
     "files": [
       "electron/**/*",
