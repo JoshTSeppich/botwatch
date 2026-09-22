@@ -25,7 +25,7 @@ right-click Session Pill.app → Open → Open
 Do that once and macOS remembers. If you'd rather build it yourself:
 
 ```sh
-git clone https://github.com/joshuaseppich/session-pill
+git clone https://github.com/JoshTSeppich/session-pill
 cd session-pill
 npm install
 npm start          # run it
