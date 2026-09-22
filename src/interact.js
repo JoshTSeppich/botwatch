@@ -123,6 +123,15 @@ export function wireDrag(pill, host) {
   };
 }
 
+// Right-click anywhere on a pill. This is the app's only menu, so it is also
+// the only way out of it.
+export function wireMenu(pill, host) {
+  pill.el.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    host.menu();
+  });
+}
+
 // The overlay window is bigger than the pills. Everything outside them has to
 // stay click-through or the terminal below loses its top edge.
 export function wireClickThrough(dock, host) {

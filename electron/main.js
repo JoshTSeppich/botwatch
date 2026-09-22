@@ -3,7 +3,7 @@
 // owns window geometry and nothing else — data comes from sessions.js, raising
 // from raise.js.
 
-import { app, BrowserWindow, ipcMain, net, protocol, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Tray, net, protocol, screen } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -30,6 +30,7 @@ let drag = null;
 // Last known permission state. The tracker reads it so it stays silent until
 // macOS has said yes.
 let permitted = process.platform !== 'darwin';
+let tray = null;
 
 function currentDisplayKey() {
   if (!terminal) return 'primary';
@@ -158,6 +159,23 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('pill:grant', () => requestPermissions());
 
+  // No Dock icon and a window that never takes focus, so without this there is
+  // no way to quit the app at all. The menu bar is the one place an accessory
+  // app is guaranteed to be reachable.
+  tray = new Tray(join(here, 'assets', 'trayTemplate.png'));
+  tray.setToolTip('Session Pill');
+  tray.setContextMenu(pillMenu());
+
+  // Right-clicking the pill offers the same menu, for when the pill is what
+  // your hand is already on.
+  ipcMain.on('pill:menu', () => {
+    if (!win) return;
+    // A menu needs a window that can take focus, and this one deliberately
+    // cannot. Lend it focus for exactly as long as the menu is open.
+    win.setFocusable(true);
+    pillMenu().popup({ window: win, callback: () => win?.setFocusable(false) });
+  });
+
   ipcMain.handle('pill:raise', (_event, sessionId) => raise(sessionId));
 
   ipcMain.on('pill:interactive', (_event, on) => {
@@ -199,6 +217,21 @@ app.whenReady().then(async () => {
     redock();
   });
 });
+
+function pillMenu() {
+  return Menu.buildFromTemplate([
+    {
+      label: 'Reset position',
+      click: () => {
+        drag = null;
+        setOffset({ x: 0, y: 0 }, true);
+        redock();
+      },
+    },
+    { type: 'separator' },
+    { label: 'Quit Session Pill', click: () => app.quit() },
+  ]);
+}
 
 // An overlay has no windows to come back to, so the usual macOS re-activate
 // dance does not apply; quitting is the only exit.

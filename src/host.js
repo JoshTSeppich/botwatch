@@ -19,6 +19,7 @@ function nativeHost(dock) {
     read: () => bridge.read(),
     raise: (id) => bridge.raise(id),
     grant: () => bridge.grant(),
+    menu: () => bridge.menu(),
     beginDrag: () => {
       dock.classList.remove('is-snapping');
       bridge.beginDrag();
@@ -41,6 +42,7 @@ function browserHost(dock) {
     read: () => mock.read(),
     raise: (id) => Promise.resolve(mock.isStale(id) ? 'stale' : 'ok'),
     grant: () => Promise.resolve(),
+    menu: () => {},
     beginDrag() {
       dock.classList.remove('is-snapping');
       anchor = { ...offset };

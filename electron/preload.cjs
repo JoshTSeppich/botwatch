@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('pillHost', {
   read: () => ipcRenderer.invoke('pill:read'),
   raise: (sessionId) => ipcRenderer.invoke('pill:raise', sessionId),
   grant: () => ipcRenderer.invoke('pill:grant'),
+  menu: () => ipcRenderer.send('pill:menu'),
   beginDrag: () => ipcRenderer.send('pill:dragStart'),
   dragTo: (dx, dy) => ipcRenderer.send('pill:dragTo', dx, dy),
   endDrag: () => ipcRenderer.send('pill:endDrag'),

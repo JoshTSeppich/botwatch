@@ -22,7 +22,13 @@ It is not notarised — I don't pay for a Developer ID — so the first open nee
 right-click Session Pill.app → Open → Open
 ```
 
-Do that once and macOS remembers. If you'd rather build it yourself:
+Do that once and macOS remembers.
+
+**It has no Dock icon.** It's an accessory app: the pill is the interface. There's a small pill
+glyph in the menu bar for the one thing the pill can't do — quitting. Right-clicking the pill
+gives you the same menu.
+
+If you'd rather build it yourself:
 
 ```sh
 git clone https://github.com/JoshTSeppich/session-pill

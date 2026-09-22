@@ -16,7 +16,7 @@ import {
   usageTone,
 } from './model.js';
 import { createHost } from './host.js';
-import { wireClickThrough, wireDrag, wireExpand, wireRaise } from './interact.js';
+import { wireClickThrough, wireDrag, wireExpand, wireMenu, wireRaise } from './interact.js';
 import { createStatusPill, createUsagePill } from './render.js';
 
 const TICK_MS = 1000;
@@ -64,6 +64,8 @@ export function start(dock) {
     },
   });
 
+  wireMenu(status, host);
+  wireMenu(usage, host);
   wireClickThrough(dock, host);
 
   async function tick() {
