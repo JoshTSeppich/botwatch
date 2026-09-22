@@ -1,0 +1,683 @@
+/* Tokens and geometry from the spec sheet. Dark is the base; the light variant
+   swaps ink and status hues only — geometry, blur and type never change. The
+   variant follows the OS appearance, never the terminal's own theme. */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* The pill opposes the terminal. On a dark OS it is near-white, which is what
+     makes it read as a floating label instead of part of the window chrome.
+     This is a deliberate break from the spec's translucent dark pill: that was
+     built to recede, and this has to be noticed. */
+  --pill-bg: rgba(250, 250, 248, 0.97);
+  --pill-bg-open: rgba(252, 252, 250, 0.99);
+  --pill-border: rgba(0, 0, 0, 0.18);
+  --border-waiting: rgba(154, 103, 0, 0.55);
+  --border-errored: rgba(207, 34, 46, 0.55);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  --shadow-open: 0 16px 44px rgba(0, 0, 0, 0.66);
+
+  --ink: #1b1f24;
+  --ink-2: #57606a;
+  --ink-row: #24292f;
+  --ink-sub: #6e7681;
+  --ink-mute: #57606a;
+
+  --working: #1a7f37;
+  --waiting: #9a6700;
+  --errored: #cf222e;
+
+  --wait-ink: #3d2e00;
+  --wait-ink-2: #9a6700;
+  --wait-sub: #8a6d2e;
+  --wait-x: #9a6700;
+  --wait-wash: rgba(154, 103, 0, 0.12);
+  --hdr-wait-ink: #3d2e00;
+
+  --handle: #8c949e;
+  --handle-hover: #57606a;
+  --wash: rgba(0, 0, 0, 0.05);
+  --chip: rgba(0, 0, 0, 0.07);
+  --rule: rgba(0, 0, 0, 0.14);
+  --rule-soft: rgba(0, 0, 0, 0.1);
+  --rule-row: rgba(0, 0, 0, 0.07);
+
+  --pill-h: 36px;
+  --row-h: 52px;
+  --usage-row-h: 34px;
+  --radius-pill: 18px;
+  --radius-card: 14px;
+  --rows-max: 260px;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    /* Light OS: the pill flips to near-black for the same reason. */
+    --pill-bg: rgba(18, 20, 25, 0.96);
+    --pill-bg-open: rgba(18, 20, 25, 0.99);
+    --pill-border: rgba(255, 255, 255, 0.2);
+    --border-waiting: rgba(210, 153, 34, 0.5);
+    --border-errored: rgba(248, 81, 73, 0.5);
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    --shadow-open: 0 14px 36px rgba(0, 0, 0, 0.34);
+
+    --ink: #e6edf3;
+    --ink-2: #9fb0c0;
+    --ink-row: #c9d1d9;
+    --ink-sub: #6e7681;
+    --ink-mute: #8b949e;
+
+    --working: #3fb950;
+    --waiting: #d29922;
+    --errored: #f85149;
+
+    --wait-ink: #f0e6d2;
+    --wait-ink-2: #e3b341;
+    --wait-sub: #a98b4e;
+    --wait-x: #8a7647;
+    --wait-wash: rgba(210, 153, 34, 0.1);
+    --hdr-wait-ink: #f5eedf;
+
+    --handle: #5c6470;
+    --handle-hover: #8b949e;
+    --wash: rgba(255, 255, 255, 0.05);
+    --chip: rgba(255, 255, 255, 0.07);
+    --rule: rgba(255, 255, 255, 0.12);
+    --rule-soft: rgba(255, 255, 255, 0.08);
+    --rule-row: rgba(255, 255, 255, 0.05);
+  }
+}
+
+:root[data-theme='light'] {
+  /* Light OS: the pill flips to near-black for the same reason. */
+  --pill-bg: rgba(18, 20, 25, 0.96);
+  --pill-bg-open: rgba(18, 20, 25, 0.99);
+  --pill-border: rgba(255, 255, 255, 0.2);
+  --border-waiting: rgba(210, 153, 34, 0.5);
+  --border-errored: rgba(248, 81, 73, 0.5);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-open: 0 14px 36px rgba(0, 0, 0, 0.34);
+
+  --ink: #e6edf3;
+  --ink-2: #9fb0c0;
+  --ink-row: #c9d1d9;
+  --ink-sub: #6e7681;
+  --ink-mute: #8b949e;
+
+  --working: #3fb950;
+  --waiting: #d29922;
+  --errored: #f85149;
+
+  --wait-ink: #f0e6d2;
+  --wait-ink-2: #e3b341;
+  --wait-sub: #a98b4e;
+  --wait-x: #8a7647;
+  --wait-wash: rgba(210, 153, 34, 0.1);
+  --hdr-wait-ink: #f5eedf;
+
+  --handle: #5c6470;
+  --handle-hover: #8b949e;
+  --wash: rgba(255, 255, 255, 0.05);
+  --chip: rgba(255, 255, 255, 0.07);
+  --rule: rgba(255, 255, 255, 0.12);
+  --rule-soft: rgba(255, 255, 255, 0.08);
+  --rule-row: rgba(255, 255, 255, 0.05);
+}
+
+/* ---- dock ------------------------------------------------------------- */
+
+/* The overlay window is larger than the pills so the expanded card and the
+   shadow have somewhere to live. Everything outside .dock is click-through. */
+.dock {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(calc(-50% + var(--dock-x, 0px)), var(--dock-y, 0px));
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--sans);
+}
+
+.dock.is-snapping {
+  transition: transform 120ms ease-out;
+}
+
+/* ---- shared pill shell ------------------------------------------------ */
+
+.pill {
+  box-sizing: border-box;
+  border-radius: var(--radius-pill);
+  background: var(--pill-bg);
+  border: 1px solid var(--pill-border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+  color: var(--ink);
+  user-select: none;
+}
+
+.pill.is-open {
+  background: var(--pill-bg-open);
+  box-shadow: var(--shadow-open);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.pill--status {
+  width: 320px;
+}
+
+.pill--status.is-wide {
+  width: 440px;
+}
+
+/* Zero sessions: shrink to intrinsic width, no count, no estimate. */
+.pill--status.is-empty {
+  width: auto;
+}
+
+.pill--status.is-waiting {
+  border-color: var(--border-waiting);
+}
+
+.pill--status.is-errored {
+  border-color: var(--border-errored);
+}
+
+.pill--usage {
+  width: 228px;
+}
+
+/* ---- drag handle ------------------------------------------------------ */
+
+.handle {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: 3px 3px;
+  grid-template-rows: 3px 3px;
+  gap: 3px;
+  margin-right: 2px;
+  cursor: grab;
+}
+
+/* 9 x 9 visually, 24 x 24 to the pointer. */
+.handle::after {
+  content: '';
+  position: absolute;
+  inset: -7.5px;
+}
+
+.handle.is-dragging {
+  cursor: grabbing;
+}
+
+.handle i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--handle);
+}
+
+.handle:hover i,
+.handle.is-dragging i {
+  background: var(--handle-hover);
+}
+
+/* ---- header row (identical collapsed and expanded) ------------------- */
+
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--pill-h);
+  padding: 0 13px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.pill--status.is-empty .hdr {
+  display: inline-flex;
+  gap: 8px;
+  cursor: default;
+}
+
+/* A notice is the whole pill and the whole button. */
+.pill--status.is-notice {
+  width: auto;
+}
+
+.pill--status.is-notice .hdr {
+  display: inline-flex;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.pill.is-open .hdr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.hdr__badge {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--idle);
+  box-shadow: 0 0 0 3px transparent;
+}
+
+.hdr__badge .dot {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* The header dot carries the aggregate; a row dot carries its own session. The
+   selectors stay separate so the aggregate never bleeds into the rows. */
+.hdr__badge .dot.is-working,
+.dot--row.is-working {
+  background: var(--working);
+  --ring: rgba(63, 185, 80, 0.2);
+}
+
+.hdr__badge .dot.is-waiting,
+.dot--row.is-waiting {
+  background: var(--waiting);
+  --ring: rgba(210, 153, 34, 0.22);
+}
+
+.hdr__badge .dot.is-errored,
+.dot--row.is-errored {
+  background: var(--errored);
+  --ring: rgba(248, 81, 73, 0.22);
+}
+
+/* Idle never pulses — a still dot is how you read "nothing is happening". */
+.hdr__badge .dot.is-idle {
+  animation: none;
+  background: var(--idle);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 3px var(--ring, transparent);
+  }
+  50% {
+    opacity: 0.45;
+    box-shadow: 0 0 0 6px var(--ring, transparent);
+  }
+}
+
+.count {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.prose {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.pill--status.is-notice .prose {
+  flex: none;
+  color: var(--ink);
+}
+
+.pill--status.is-empty .prose {
+  flex: none;
+  font-size: 13px;
+  color: var(--ink-mute);
+}
+
+.pill--status.is-waiting .prose {
+  color: var(--hdr-wait-ink);
+}
+
+.eta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pill--status.is-waiting .eta {
+  color: var(--wait-ink-2);
+}
+
+.chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  background: var(--chip);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-row);
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* First thing dropped when width is tight, so it never wraps and never grows. */
+.model {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.div {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--rule);
+}
+
+/* ---- session rows ----------------------------------------------------- */
+
+.rows {
+  max-height: 0;
+  opacity: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  transition: max-height 120ms ease-in, opacity 120ms ease-in;
+}
+
+.rows::-webkit-scrollbar {
+  display: none;
+}
+
+.pill--status.is-open .rows {
+  max-height: min(var(--rows-h, 0px), var(--rows-max));
+  opacity: 1;
+  transition: max-height 160ms ease-out, opacity 160ms ease-out;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--row-h);
+  padding: 0 11px 0 13px;
+  box-sizing: border-box;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--rule-row);
+  cursor: pointer;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+/* Hover wash sits on an overlay so it stacks over the amber wash of a waiting
+   row instead of replacing it. No transition: only two things animate here. */
+.row::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--wash);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.row:hover::after {
+  opacity: 1;
+}
+
+.row--waiting {
+  padding-left: 10px;
+  border-left-color: var(--waiting);
+  background: var(--wait-wash);
+}
+
+.row__idx {
+  flex: none;
+  width: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.row__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.row__prose,
+.row__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row__prose {
+  font-size: 12.5px;
+  color: var(--ink-row);
+}
+
+.row__meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-sub);
+  margin-top: 1px;
+}
+
+.row__eta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+.row--waiting .row__idx,
+.row--waiting .row__eta {
+  color: var(--wait-ink-2);
+}
+
+.row--waiting .row__prose {
+  font-weight: 500;
+  color: var(--wait-ink);
+}
+
+.row--waiting .row__meta {
+  color: var(--wait-sub);
+}
+
+.row__x {
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--handle);
+  cursor: pointer;
+}
+
+/* 16 x 16 visually, 24 x 24 to the pointer. */
+.row__x::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
+.row__x:hover {
+  color: var(--ink);
+  background: var(--wash);
+}
+
+.row--waiting .row__x {
+  color: var(--wait-x);
+}
+
+/* A stale window handle gets one 2px shake and a neutral dot — no dialog. */
+.row--stale {
+  animation: shake 180ms ease-in-out;
+}
+
+.row--stale .dot--row {
+  background: var(--idle);
+}
+
+@keyframes shake {
+  25% {
+    transform: translateX(-2px);
+  }
+  75% {
+    transform: translateX(2px);
+  }
+}
+
+/* ---- usage pill ------------------------------------------------------- */
+
+.pill--usage .hdr {
+  gap: 9px;
+  cursor: default;
+}
+
+.usage__unit {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.bar {
+  flex: 1;
+  min-width: 0;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.bar__fill {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--working);
+}
+
+.bar__fill.is-waiting {
+  background: var(--waiting);
+}
+
+.bar__fill.is-errored {
+  background: var(--errored);
+}
+
+.usage__pct {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage__pct.is-errored {
+  color: var(--errored);
+}
+
+.usage__tokens {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pill--usage.is-open .hdr__collapsed {
+  display: none;
+}
+
+.ulist {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 120ms ease-in, opacity 120ms ease-in;
+}
+
+.pill--usage.is-open .ulist {
+  max-height: 200px;
+  opacity: 1;
+  transition: max-height 160ms ease-out, opacity 160ms ease-out;
+}
+
+.ulist__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  height: var(--usage-row-h);
+  padding: 0 13px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--rule-row);
+}
+
+.ulist__row:last-child {
+  border-bottom: 0;
+}
+
+.ulist__label {
+  font-size: 12.5px;
+  color: var(--ink-row);
+}
+
+.ulist__fig {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Remaining is the number you act on; burn rate and reset are context. */
+.ulist__row--primary .ulist__fig {
+  color: var(--ink);
+}
+
+.ulist__row--muted .ulist__label,
+.ulist__row--muted .ulist__fig {
+  color: var(--ink-mute);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot,
+  .row--stale {
+    animation: none !important;
+  }
+  .rows,
+  .ulist,
+  .dock {
+    transition: none !important;
+  }
+}
