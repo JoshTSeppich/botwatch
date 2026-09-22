@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!-- Source for build/icon.icns. Rendered at 1024 by tools/make-icon.sh.
+     The icon is the widget: a white pill with a live dot on it. -->
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 1024px; height: 1024px; background: transparent; }
+  .squircle {
+    width: 1024px; height: 1024px; box-sizing: border-box;
+    border-radius: 229px;
+    background: linear-gradient(160deg, #262b35 0%, #14171d 55%, #0b0e14 100%);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 3px 0 rgba(255,255,255,0.09), inset 0 -3px 0 rgba(0,0,0,0.5);
+  }
+  .pill {
+    width: 700px; height: 268px; border-radius: 134px;
+    background: #fafaf8;
+    display: flex; align-items: center; gap: 46px;
+    padding: 0 56px; box-sizing: border-box;
+    box-shadow: 0 28px 60px rgba(0,0,0,0.55);
+  }
+  .dot {
+    width: 132px; height: 132px; border-radius: 50%; flex: none;
+    background: #2da44e;
+  }
+  .bar { height: 46px; border-radius: 23px; background: #1b1f24; }
+  .bar--long { flex: 1; }
+</style></head>
+<body><div class="squircle"><div class="pill">
+  <div class="dot"></div><div class="bar bar--long"></div>
+</div></div></body></html>
