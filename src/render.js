@@ -2,7 +2,7 @@
 // the DOM each second would drop hover and restart the pulse, and the spec is
 // strict about what is allowed to move.
 
-const STATE_CLASSES = ['is-working', 'is-waiting', 'is-errored', 'is-idle'];
+const STATE_CLASSES = ['is-working', 'is-waiting', 'is-errored', 'is-stalled', 'is-idle'];
 
 function el(tag, className, text) {
   const node = document.createElement(tag);

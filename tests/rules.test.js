@@ -94,6 +94,16 @@ test('headline names the stopped session before the blocked one', () => {
   assert.match(text, /session 4 stopped/i);
 });
 
+test('headline does not call silence a failure', () => {
+  assert.equal(headline([at('stalled', { index: 3 })]), 'Session 3 has gone quiet');
+  assert.match(headline([at('errored', { index: 3 })]), /last command failed/);
+});
+
+test('a failed session is named ahead of a merely quiet one', () => {
+  const text = headline([at('stalled', { index: 2 }), at('errored', { index: 5 })]);
+  assert.match(text, /Session 5/);
+});
+
 test('headline defers to the sentence the adapter supplied', () => {
   assert.equal(headline([at('working')], 'Refactoring auth'), 'Refactoring auth');
 });

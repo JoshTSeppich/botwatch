@@ -295,8 +295,12 @@
   --ring: rgba(210, 153, 34, 0.22);
 }
 
+/* Stalled and errored share a colour, as the spec has it: both mean this
+   session is not going to finish on its own. */
 .hdr__badge .dot.is-errored,
-.dot--row.is-errored {
+.hdr__badge .dot.is-stalled,
+.dot--row.is-errored,
+.dot--row.is-stalled {
   background: var(--errored);
   --ring: rgba(248, 81, 73, 0.22);
 }

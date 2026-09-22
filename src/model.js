@@ -60,8 +60,13 @@ export function headline(sessions, supplied) {
   if (supplied) return supplied;
   if (sessions.length === 0) return 'idle';
   // Same precedence as the dot, so the sentence and the colour never disagree.
-  const broken = sessions.find((s) => s.state === 'errored' || s.state === 'stalled');
-  if (broken) return `Session ${broken.index} stopped — the last command failed`;
+  // Errored and stalled look alike but are not the same claim: one saw a
+  // command fail, the other just went quiet. Saying "failed" about silence is
+  // how a monitor loses your trust.
+  const failed = sessions.find((s) => s.state === 'errored');
+  if (failed) return `Session ${failed.index} stopped — the last command failed`;
+  const quiet = sessions.find((s) => s.state === 'stalled');
+  if (quiet) return `Session ${quiet.index} has gone quiet`;
   const blocked = sessions.find(isBlocked);
   if (blocked) return `Waiting for your answer in session ${blocked.index}`;
   const top = longestRunning(sessions);
