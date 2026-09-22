@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "demo": "python3 -m http.server 4173",
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "dist": "electron-builder --mac"
   },
   "devDependencies": {
@@ -55,5 +55,8 @@
       "title": "Session Pill"
     },
     "afterPack": "build/after-pack.cjs"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
