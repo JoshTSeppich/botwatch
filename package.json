@@ -1,0 +1,59 @@
+{
+  "name": "session-pill",
+  "version": "0.1.0",
+  "description": "An always-on-top pill that shows what every Claude Code session is doing.",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "demo": "python3 -m http.server 4173",
+    "test": "node --test tests/",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "Session Pill",
+  "license": "MIT",
+  "author": "Joshua Seppich",
+  "repository": "github.com/joshuaseppich/session-pill",
+  "build": {
+    "appId": "io.aetherx.session-pill",
+    "productName": "Session Pill",
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "index.html",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "identity": null,
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "Session Pill needs this to see which terminal window each Claude Code session is in, and to bring one to the front when you click it.",
+        "LSUIElement": true
+      }
+    },
+    "dmg": {
+      "title": "Session Pill"
+    },
+    "afterPack": "build/after-pack.cjs"
+  }
+}
