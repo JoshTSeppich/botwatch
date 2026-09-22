@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session monitor pill — harness</title>
+    <link rel="stylesheet" href="src/pill.css" />
+    <style>
+      /* Harness only. The mock terminal stands in for the window the overlay
+         docks to, so hover, drag and snap are all reachable in a browser. */
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 96px 48px 64px;
+        box-sizing: border-box;
+        background: #15171b;
+        color: #9198a1;
+        font-family: var(--sans);
+      }
+      .term {
+        position: relative;
+        width: 960px;
+        max-width: 100%;
+        height: 420px;
+        margin: 0 auto;
+        border-radius: 12px;
+        background: #0b0e14;
+        border: 1px solid #23272f;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+      }
+      .term.is-narrow {
+        width: 700px;
+      }
+      .term__bar {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 13px;
+        background: #11141b;
+        border-bottom: 1px solid #1d212a;
+        border-radius: 12px 12px 0 0;
+      }
+      .term__bar i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #3a3f4a;
+      }
+      .term__log {
+        padding: 16px 18px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.85;
+        color: #39414d;
+        white-space: pre;
+      }
+      .controls {
+        width: 960px;
+        max-width: 100%;
+        margin: 28px auto 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .controls button {
+        font: inherit;
+        color: #c9d1d9;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid #2a2e35;
+        border-radius: 6px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .controls button[aria-pressed='true'] {
+        color: #15171b;
+        background: #8b93ff;
+        border-color: #8b93ff;
+      }
+      .controls span {
+        color: #6e7681;
+        margin-left: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="term" id="term">
+      <div class="term__bar"><i></i><i></i><i></i></div>
+      <div class="term__log">$ claude
+› reading src/middleware/auth.ts
+› 14 files changed, 212 insertions
+› running vitest --run
+  ✓ token refresh      (18 tests)
+  ✓ session guard      (9 tests)
+› patching rate limiter
+$ claude --resume 2
+› awaiting reply</div>
+      <div class="dock" id="dock" style="--dock-y: -8px"></div>
+    </div>
+
+    <div class="controls" id="controls">
+      <span>state</span>
+      <button data-scenario="working">working</button>
+      <button data-scenario="waiting">needs you</button>
+      <button data-scenario="errored">errored</button>
+      <button data-scenario="empty">idle</button>
+      <span>pill</span>
+      <button data-width="1200">wide 440</button>
+      <button data-width="700">narrow 320</button>
+      <span>theme</span>
+      <button data-theme="dark">dark</button>
+      <button data-theme="light">light</button>
+    </div>
+
+    <script type="module">
+      import { start } from './src/app.js';
+      import { setScenario, setTerminalWidth } from './src/source.mock.js';
+
+      const app = start(document.getElementById('dock'));
+      const term = document.getElementById('term');
+
+      function press(group, value) {
+        for (const button of document.querySelectorAll(`[data-${group}]`)) {
+          button.setAttribute('aria-pressed', String(button.dataset[group] === value));
+        }
+      }
+
+      document.getElementById('controls').addEventListener('click', (event) => {
+        const button = event.target.closest('button');
+        if (!button) return;
+        const { scenario, width, theme } = button.dataset;
+        if (scenario) {
+          setScenario(scenario);
+          press('scenario', scenario);
+        }
+        if (width) {
+          setTerminalWidth(Number(width));
+          term.classList.toggle('is-narrow', Number(width) < 900);
+          press('width', width);
+        }
+        if (theme) {
+          document.documentElement.dataset.theme = theme;
+          term.style.background = theme === 'light' ? '#f7f7f5' : '#0b0e14';
+          press('theme', theme);
+        }
+        void app.tick();
+      });
+
+      press('scenario', 'working');
+      press('width', '1200');
+      press('theme', 'dark');
+      document.documentElement.dataset.theme = 'dark';
+    </script>
+  </body>
+</html>
