@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 
 import { guardSettings } from './settings.js';
+import { guardedEnv } from './refguard.js';
 import { EventEmitter } from 'node:events';
 
 // Turns stream-json lines into the handful of facts a worker row shows.
@@ -91,7 +92,11 @@ export class Worker extends EventEmitter {
 
   start() {
     const args = workerArgs(this);
-    this.child = spawn('claude', args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn('claude', args, {
+      cwd: this.cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: guardedEnv(),
+    });
     this.state = 'running';
     this.message(this.task);
 

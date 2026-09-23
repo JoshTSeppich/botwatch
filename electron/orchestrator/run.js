@@ -8,6 +8,7 @@ import { EventEmitter } from 'node:events';
 
 import * as budget from './budget.js';
 import * as policy from './policy.js';
+import * as refguard from './refguard.js';
 import * as worktrees from './worktrees.js';
 import { Worker } from './worker.js';
 
@@ -29,11 +30,17 @@ export class Run extends EventEmitter {
     this.userApprovedMerge = false;
     this.pendingQuestion = null;
     this.nextId = 1;
-    // reap() was dead code until this line: nothing called it, so finished
-    // workers stayed resident for the life of the run. unref so the timer
-    // never keeps the process alive on its own.
-    this.reaper = setInterval(() => this.reap(), 15_000);
+    // Five minutes, not fifteen seconds: the orchestrator messaging a worker
+    // that has finished its turn is ordinary use, not a leak, and reaping it
+    // out from under a conversation would be worse than the leak was.
+    this.reaper = setInterval(() => this.reap(), 60_000);
     this.reaper.unref?.();
+  }
+
+  // The ref-level guard has to exist before any worker does.
+  async arm() {
+    await refguard.install(this.repo);
+    return this;
   }
 
   // Releasing closes the worker's stdin, which is what makes the CLI exit. It
@@ -42,6 +49,20 @@ export class Run extends EventEmitter {
   close() {
     clearInterval(this.reaper);
     for (const worker of this.workers) worker.release();
+    return refguard.uninstall(this.repo).catch(() => {});
+  }
+
+  // The user clicked Merge. The token is the only thing the ref hook accepts,
+  // and it is spent immediately either way.
+  async mergeWith(perform) {
+    const verdict = policy.canMerge(this.state);
+    if (!verdict.ok) return { error: verdict.reason };
+    await refguard.issueToken(this.repo);
+    try {
+      return await perform();
+    } finally {
+      await refguard.consumeToken(this.repo);
+    }
   }
 
   get budgetExhausted() {
@@ -133,7 +154,7 @@ export class Run extends EventEmitter {
   // A worker that finished and has not been spoken to since is just a live
   // process holding memory. `now` is a parameter so this is testable without
   // waiting two minutes.
-  reap(now = Date.now(), idleMs = 120_000) {
+  reap(now = Date.now(), idleMs = 300_000) {
     let released = 0;
     for (const worker of this.workers) {
       if (worker.doneAt && now - worker.doneAt > idleMs) {
@@ -159,6 +180,9 @@ export class Run extends EventEmitter {
   drain() {
     if (this.#draining) return 0;
     this.#draining = true;
+    // A slot is wanted, so this is the moment finished processes are worth
+    // releasing.
+    this.reap();
     let started = 0;
     while (this.queue.length && policy.canSpawn(this.state, this.limits).ok) {
       this.queue.shift()?.start();

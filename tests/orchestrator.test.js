@@ -10,6 +10,7 @@ import * as policy from '../electron/orchestrator/policy.js';
 import { branchName, uniqueBranch, worktreePath } from '../electron/orchestrator/worktrees.js';
 import { readEvent, workerArgs } from '../electron/orchestrator/worker.js';
 import { Run } from '../electron/orchestrator/run.js';
+import { guardedEnv } from '../electron/orchestrator/refguard.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -216,4 +217,13 @@ test('close stops the reaper and releases every worker', () => {
   run.workers.push({ id: 'w1', release: () => released.push('w1') }, { id: 'w2', release: () => released.push('w2') });
   run.close();
   assert.deepEqual(released, ['w1', 'w2']);
+});
+
+test('the guarded environment marks the session and removes any push target', () => {
+  const env = guardedEnv({ PATH: '/usr/bin' });
+  assert.equal(env.BOTWATCH_GUARD, '1', 'the ref hook keys off this');
+  assert.equal(env.GIT_CONFIG_KEY_0, 'remote.origin.pushurl');
+  assert.match(env.GIT_CONFIG_VALUE_0, /botwatch-push-disabled/);
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0', 'never sit waiting on a credential prompt');
+  assert.equal(env.PATH, '/usr/bin', 'the rest of the environment is passed through');
 });
