@@ -126,7 +126,13 @@ export class Worker extends EventEmitter {
       this.limits = { fiveHour: event.fiveHour, sevenDay: event.sevenDay };
       this.emit('limits', this, this.limits);
     }
-    if (event.kind === 'finished') this.state = event.error ? 'errored' : 'done';
+    if (event.kind === 'finished') {
+      this.state = event.error ? 'errored' : 'done';
+      // The process stays alive and answerable after its turn, which is how
+      // message_worker works at all. It also means a finished worker is a live
+      // `claude` holding memory until something releases it.
+      this.doneAt = Date.now();
+    }
     this.emit('change', this);
   }
 
@@ -134,11 +140,20 @@ export class Worker extends EventEmitter {
   // the orchestrator can answer a worker without restarting it.
   message(text) {
     if (!this.child?.stdin.writable) return false;
+    // Talking to a finished worker puts it back in use, so it is no longer a
+    // candidate for reaping.
+    this.doneAt = null;
     const line = JSON.stringify({
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text }] },
     });
     return this.child.stdin.write(`${line}\n`);
+  }
+
+  // Ends the session politely: closing stdin lets the CLI exit on its own.
+  release() {
+    this.doneAt = null;
+    if (this.child?.stdin.writable) this.child.stdin.end();
   }
 
   stop() {

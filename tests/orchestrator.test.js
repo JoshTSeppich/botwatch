@@ -169,3 +169,14 @@ test('a branch name that is taken gets a suffix instead of failing the run', asy
   assert.equal(await uniqueBranch('/r', 'theme tokens', exists), 'bw/theme-tokens-3');
   assert.equal(await uniqueBranch('/r', 'something else', exists), 'bw/something-else');
 });
+
+test('a finished worker is released once nobody has spoken to it for a while', () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  const released = [];
+  const fake = (id, doneAt) => ({ id, doneAt, release() { released.push(id); this.doneAt = null; } });
+  run.workers.push(fake('w1', 1000), fake('w2', 90_000), fake('w3', null));
+
+  assert.equal(run.reap(100_000, 60_000), 1, 'only the long-idle worker is released');
+  assert.deepEqual(released, ['w1']);
+  assert.equal(run.reap(100_000, 60_000), 0, 'releasing is not repeated');
+});

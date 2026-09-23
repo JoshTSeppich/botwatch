@@ -116,6 +116,20 @@ export class Run extends EventEmitter {
     return text;
   }
 
+  // A worker that finished and has not been spoken to since is just a live
+  // process holding memory. `now` is a parameter so this is testable without
+  // waiting two minutes.
+  reap(now = Date.now(), idleMs = 120_000) {
+    let released = 0;
+    for (const worker of this.workers) {
+      if (worker.doneAt && now - worker.doneAt > idleMs) {
+        worker.release();
+        released += 1;
+      }
+    }
+    return released;
+  }
+
   pauseAll(reason = 'user') {
     this.pauseReason = reason;
     for (const w of this.workers) if (w.state === 'running') w.stop();
