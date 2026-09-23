@@ -27,14 +27,50 @@ export function readEvent(record) {
     };
   }
   if (record.type === 'result') {
+    const usage = record.usage;
     return {
       kind: 'finished',
       error: Boolean(record.is_error),
       result: record.result ?? null,
+      // The result record carries the run's own usage totals, which is where
+      // the last turn's tokens actually show up.
+      tokens: usage
+        ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
+        : 0,
+    };
+  }
+  // The real plan windows, straight from the CLI. The handoff assumed these
+  // were unavailable and fell back to counting tokens against a number the user
+  // types in; they are not, so nothing has to be guessed.
+  if (record.type === 'rate_limit_event') {
+    const windows = record.rate_limit_info?.unifiedWindows ?? {};
+    return {
+      kind: 'limits',
       tokens: 0,
+      fiveHour: windows.five_hour ?? null,
+      sevenDay: windows.seven_day ?? null,
     };
   }
   return null;
+}
+
+// The task is deliberately absent from these arguments. With
+// --input-format stream-json the CLI waits for its prompt on stdin, so passing
+// it positionally leaves the worker hanging forever with no session and no
+// events — which is exactly what it did the first time I ran it.
+export function workerArgs({ model, permissionMode }) {
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--input-format',
+    'stream-json',
+    '--verbose',
+    '--model',
+    model,
+    '--permission-mode',
+    permissionMode,
+  ];
 }
 
 export class Worker extends EventEmitter {
@@ -48,21 +84,10 @@ export class Worker extends EventEmitter {
   }
 
   start() {
-    const args = [
-      '-p',
-      this.task,
-      '--output-format',
-      'stream-json',
-      '--input-format',
-      'stream-json',
-      '--verbose',
-      '--model',
-      this.model,
-      '--permission-mode',
-      this.permissionMode,
-    ];
+    const args = workerArgs(this);
     this.child = spawn('claude', args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     this.state = 'running';
+    this.message(this.task);
 
     let buffer = '';
     this.child.stdout.on('data', (chunk) => {
@@ -96,6 +121,10 @@ export class Worker extends EventEmitter {
     }
     if (event.kind === 'progress' && (event.tool || event.text)) {
       this.summary = event.tool ? `running ${event.tool}` : event.text;
+    }
+    if (event.kind === 'limits') {
+      this.limits = { fiveHour: event.fiveHour, sevenDay: event.sevenDay };
+      this.emit('limits', this, this.limits);
     }
     if (event.kind === 'finished') this.state = event.error ? 'errored' : 'done';
     this.emit('change', this);

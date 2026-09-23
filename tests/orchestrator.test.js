@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import * as budget from '../electron/orchestrator/budget.js';
 import * as policy from '../electron/orchestrator/policy.js';
 import { branchName, worktreePath } from '../electron/orchestrator/worktrees.js';
-import { readEvent } from '../electron/orchestrator/worker.js';
+import { readEvent, workerArgs } from '../electron/orchestrator/worker.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -120,4 +120,30 @@ test('worker token counts ignore cache reads, as the usage ledger does', () => {
   });
   assert.equal(event.tokens, 17);
   assert.equal(event.tool, 'Bash');
+});
+
+test('the task is never passed as an argument, or the worker hangs on stdin', () => {
+  const args = workerArgs({ model: 'haiku', permissionMode: 'plan' });
+  assert.equal(args.includes('--input-format'), true);
+  // -p must be a bare flag: a value here is the bug that hung the first worker.
+  assert.equal(args[args.indexOf('-p') + 1].startsWith('--'), true);
+});
+
+test('the result record is where the final turn\'s tokens arrive', () => {
+  const event = readEvent({
+    type: 'result',
+    is_error: false,
+    usage: { input_tokens: 10, output_tokens: 35, cache_creation_input_tokens: 5, cache_read_input_tokens: 21_611 },
+  });
+  assert.equal(event.kind, 'finished');
+  assert.equal(event.tokens, 50);
+});
+
+test('plan windows are read from the CLI rather than guessed at', () => {
+  const event = readEvent({
+    type: 'rate_limit_event',
+    rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0, resetsAt: 1 }, seven_day: { utilization: 0.39, resetsAt: 2 } } },
+  });
+  assert.equal(event.kind, 'limits');
+  assert.equal(event.sevenDay.utilization, 0.39);
 });
