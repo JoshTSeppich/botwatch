@@ -7,8 +7,9 @@ import { test } from 'node:test';
 
 import * as budget from '../electron/orchestrator/budget.js';
 import * as policy from '../electron/orchestrator/policy.js';
-import { branchName, worktreePath } from '../electron/orchestrator/worktrees.js';
+import { branchName, uniqueBranch, worktreePath } from '../electron/orchestrator/worktrees.js';
 import { readEvent, workerArgs } from '../electron/orchestrator/worker.js';
+import { Run } from '../electron/orchestrator/run.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -146,4 +147,25 @@ test('plan windows are read from the CLI rather than guessed at', () => {
   });
   assert.equal(event.kind, 'limits');
   assert.equal(event.sevenDay.utilization, 0.39);
+});
+
+test('a finished worker frees its slot and the queue moves on its own', () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku', maxWorkers: 1 });
+  const fake = (id, state) => ({ id, state, start() { this.state = 'running'; } });
+  const running = fake('w1', 'running');
+  const queued = fake('w2', 'queued');
+  run.workers.push(running, queued);
+  run.queue.push(queued);
+
+  assert.equal(run.drain(), 0, 'nothing starts while the slot is taken');
+  running.state = 'done';
+  assert.equal(run.drain(), 1, 'the queued worker starts once the slot frees');
+  assert.equal(queued.state, 'running');
+});
+
+test('a branch name that is taken gets a suffix instead of failing the run', async () => {
+  const taken = new Set(['bw/theme-tokens', 'bw/theme-tokens-2']);
+  const exists = async (_repo, branch) => taken.has(branch);
+  assert.equal(await uniqueBranch('/r', 'theme tokens', exists), 'bw/theme-tokens-3');
+  assert.equal(await uniqueBranch('/r', 'something else', exists), 'bw/something-else');
 });

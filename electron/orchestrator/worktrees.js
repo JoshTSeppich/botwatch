@@ -25,8 +25,27 @@ export function worktreePath(repo, branch) {
   return join(repo, '..', `.botwatch-worktrees`, branch.replace(/\//g, '-'));
 }
 
+// Worker ids restart at w1 on every run, so a second run over the same repo
+// asks for branches the first run already made. Suffix rather than fail: the
+// alternative is an orchestrator that works once per repo.
+export async function branchExists(repo, branch) {
+  return run('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    .then(() => true)
+    .catch(() => false);
+}
+
+export async function uniqueBranch(repo, task, exists = branchExists) {
+  const base = branchName(task);
+  if (!(await exists(repo, base))) return base;
+  for (let n = 2; n < 100; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!(await exists(repo, candidate))) return candidate;
+  }
+  return `${base}-${Date.now().toString(36)}`;
+}
+
 export async function create(repo, task) {
-  const branch = branchName(task);
+  const branch = await uniqueBranch(repo, task);
   const path = worktreePath(repo, branch);
   await run('git', ['-C', repo, 'worktree', 'add', '-b', branch, path], { timeout: 30_000 });
   return { branch, path };

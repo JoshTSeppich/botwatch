@@ -11,7 +11,13 @@ import * as policy from './policy.js';
 import * as worktrees from './worktrees.js';
 import { Worker } from './worker.js';
 
+const TERMINAL = new Set(['done', 'errored', 'stopped']);
+
 export class Run extends EventEmitter {
+  // drain() emits the event that triggers drain(), so it needs to know when it
+  // is already inside itself.
+  #draining = false;
+
   constructor({ repo, goal, model, maxWorkers = 2, budgetTokens = 1_000_000, permissionCeiling = 'default' }) {
     super();
     Object.assign(this, { repo, goal, model, permissionCeiling });
@@ -60,7 +66,13 @@ export class Run extends EventEmitter {
       if (this.budgetExhausted) this.pauseAll('budget');
       this.emit('change', this);
     });
-    worker.on('change', () => this.emit('change', this));
+    worker.on('change', () => {
+      // A finished worker frees its slot. Without this the queue only moved
+      // when somebody stopped a worker by hand, so a run with more tasks than
+      // slots would sit there forever with work waiting.
+      if (TERMINAL.has(worker.state)) this.drain();
+      this.emit('change', this);
+    });
     this.workers.push(worker);
 
     if (verdict.queue) {
@@ -117,9 +129,15 @@ export class Run extends EventEmitter {
 
   // Starts whatever the concurrency limit now has room for.
   drain() {
+    if (this.#draining) return 0;
+    this.#draining = true;
+    let started = 0;
     while (this.queue.length && policy.canSpawn(this.state, this.limits).ok) {
       this.queue.shift()?.start();
+      started += 1;
     }
-    this.emit('change', this);
+    this.#draining = false;
+    if (started) this.emit('change', this);
+    return started;
   }
 }
