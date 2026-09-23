@@ -60,6 +60,18 @@ export class Run extends EventEmitter {
     return refguard.uninstall(this.repo).catch(() => {});
   }
 
+  // Turns a worker's edits into a commit on its own branch. Runs as pilld, not
+  // as the worker, so nothing in the sandbox has to be loosened for it.
+  async commitWorktree(branch) {
+    const worker = this.workers.find((w) => w.branch === branch);
+    if (!worker?.cwd) return { error: `no worktree for ${branch}` };
+    const { stdout } = await execFile('git', ['-C', worker.cwd, 'status', '--porcelain']);
+    if (!stdout.trim()) return { committed: false, reason: 'nothing to commit' };
+    await execFile('git', ['-C', worker.cwd, 'add', '-A']);
+    await execFile('git', ['-C', worker.cwd, 'commit', '-m', `botwatch: ${worker.task ?? branch}`.slice(0, 200)]);
+    return { committed: true };
+  }
+
   // How the orchestrator session should be launched.
   //
   // It must not run in the user's checkout. It is the most dangerous session in
@@ -89,6 +101,10 @@ export class Run extends EventEmitter {
     const merged = [];
     for (const branch of branches) {
       if (!branch?.startsWith('bw/')) return { error: `refusing to merge ${branch}: not a worker branch` };
+      // Workers do not commit. The sandbox keeps them out of the main repo's
+      // .git, which is the point — so pilld commits their worktree here, from
+      // outside the sandbox, at the moment the user asks for the work.
+      await this.commitWorktree(branch).catch(() => {});
       try {
         await execFile('git', ['-C', this.repo, 'merge', '--no-ff', '-m', `botwatch: merge ${branch}`, branch]);
         merged.push(branch);

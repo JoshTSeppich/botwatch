@@ -267,3 +267,16 @@ test('the orchestrator runs somewhere other than the user checkout', () => {
   assert.match(spec.cwd, /\.claude\/botwatch\/runs\//);
   assert.ok(spec.settings.permissions.deny.some((r) => r.includes('/Users/me/work/api')));
 });
+
+test('every spawned session is sandboxed with no way to fall back out of it', () => {
+  const s = guardSettings({ protect: ['/Users/me/api'] });
+  assert.equal(s.sandbox.enabled, true);
+  assert.equal(s.sandbox.allowUnsandboxedCommands, false, 'the escape hatch must be shut');
+  assert.equal(s.sandbox.failIfUnavailable, true, 'no silent unsandboxed running');
+});
+
+test('workers cannot reach a git remote through the sandbox network allowlist', () => {
+  const domains = guardSettings({}).sandbox.network.allowedDomains;
+  assert.ok(domains.includes('api.anthropic.com'), 'the model has to be reachable');
+  assert.equal(domains.some((d) => d.includes('github')), false, 'no path to a remote');
+});

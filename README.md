@@ -111,27 +111,44 @@ A worktree is *not* one of these layers: worktrees share refs with the repo they
 Every session BotWatch spawns is denied `Write`, `Edit` and `NotebookEdit` into your checkout by
 absolute path, and the orchestrator runs in its own directory rather than your repo.
 
-**Bash is not confined.** Measured: a worker at `bypassPermissions` running
-`echo pwned > /your/repo/file` succeeds. The deny rules cover tools, not the shell. What actually
-holds Bash back is the permission mode — at `acceptEdits` the same command is refused because
-nothing is there to approve it — so the ceiling you give workers is the real control. Confining
-the shell needs an OS sandbox, which isn't built.
+**Bash is confined by Claude Code's own sandbox** (Seatbelt on macOS, bubblewrap on Linux), which
+every spawned session gets through `--settings`: `sandbox.enabled`, `allowUnsandboxedCommands:
+false` so a command that can't be sandboxed doesn't fall through to the permission flow, and
+`failIfUnavailable: true` so a session nobody is watching stops rather than running unsandboxed.
+Writes are confined to the session's own directory and the network to a short allowlist that
+deliberately leaves out GitHub.
+
+Measured at `bypassPermissions`, the worst case:
+
+| Attempt | Result |
+| --- | --- |
+| `echo pwned > /your/repo/file` | blocked |
+| `rm -f /your/repo/.git/hooks/reference-transaction` | blocked |
+| writing in its own worktree | works |
+
+That closes "a shell can delete the hook", which earlier versions of this file listed as open.
+
+**Workers don't commit.** The sandbox keeps them out of the main repo's `.git`, which is exactly
+what stops them touching `hooks/`. So a worker edits files in its worktree and BotWatch commits
+that worktree to its branch — as pilld, outside the sandbox — at the moment you click Merge. It's
+why `worker_diff` reports uncommitted work rather than committed history.
 
 **Separate clones would not fix this.** They fix refs and history. A worker in a separate clone can
 still write to your checkout by absolute path, with no git involved.
 
 ### The holes, in the order I'd expect them to be hit
 
-- Bash at a permissive mode can write anywhere you can. Give workers the narrowest ceiling that
-  lets them work.
-- A session with a shell can **delete the hook**, or run `BOTWATCH_GUARD= git merge`.
-- `git reset --hard` overwrites your working tree *before* touching any ref. The ref move is
-  refused and your branch is safe; the file clobber has already happened and no hook undoes it.
+- `BOTWATCH_GUARD= git merge` still gets past the ref hook's env check. The sandbox stops the
+  merge from reaching your checkout's `.git`, so this is narrower than it was, but the env check
+  is a marker and not a lock.
+- `git reset --hard` overwrites the working tree *before* touching any ref — inside the worker's
+  own worktree, where the sandbox confines it. Your checkout is out of reach; the worker's own
+  work is not.
+- Anything the sandbox itself doesn't cover. It is an OS boundary, not a proof.
 
-Nothing on the same machine, running as the same user, survives an agent that goes looking for it.
-Ref and history safety gets better with a clone per worker —
-[docs/tickets/separate-clones.md](docs/tickets/separate-clones.md), not built. File safety needs a
-sandbox, also not built.
+Ref and history safety would get better with a clone per worker —
+[docs/tickets/separate-clones.md](docs/tickets/separate-clones.md), not built. File safety is the
+OS sandbox above, which is built and measured.
 
 ## What it can't tell you
 

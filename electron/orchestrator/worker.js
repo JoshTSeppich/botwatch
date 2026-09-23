@@ -81,9 +81,9 @@ export function workerArgs({ model, permissionMode, protect = [] }) {
 }
 
 export class Worker extends EventEmitter {
-  constructor({ id, task, cwd, branch, base, model, permissionMode }) {
+  constructor({ id, task, cwd, branch, base, model, permissionMode, protect = [], gitDir = null }) {
     super();
-    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode });
+    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir });
     this.state = 'queued';
     this.tokens = 0;
     this.sessionId = null;
