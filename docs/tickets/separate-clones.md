@@ -38,6 +38,13 @@ none of the three layers above has to hold.
 - The base branch can move under a worker, same as today, but reconciling it is a fetch rather
   than a shared ref.
 
+## What this does not fix
+
+File writes. A worker in a separate clone can still `Write` or `echo >` into the user's checkout
+by absolute path — no git involved, so no amount of git isolation touches it. That needs
+permission deny rules (built, for the Edit/Write tools) plus an OS sandbox for Bash (not built).
+Don't let this ticket be mistaken for filesystem safety.
+
 ## Recommendation
 
 Do it before anyone runs this on a repo they care about. Don't do it silently: it is a product

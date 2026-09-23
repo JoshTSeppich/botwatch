@@ -82,41 +82,56 @@ The second pill is the token budget: this week against your plan limit, this ses
 rate, and when the week resets. Set `PILL_WEEKLY_TOKEN_LIMIT` to your plan's ceiling or the
 percentage is measured against a guess of 40M.
 
-## What stops a worker touching your branches
+## What stops a worker touching your work
 
-Three layers, weakest first, and I'd rather name the hole than imply there isn't one.
+Two different problems, and conflating them is a mistake I made twice. **Refs and history** are
+one problem. **Files on disk** are another, and nothing about git solves it: any session with a
+shell, running as you, can write anywhere you can.
+
+### Refs and history
 
 1. **A PreToolUse hook** denies `git merge`, `push`, `rebase`, `reset`, `cherry-pick`, forced
    branch moves and `update-ref` by pattern. It catches the obvious spelling and nothing more:
    `g=merge; git $g main` walks straight past it.
 2. **A `reference-transaction` hook** refuses *any* move of a protected ref from a session
-   BotWatch spawned — merge, reset, `update-ref`, or a command spelled to dodge the regex — with
-   no exceptions and nothing to unlock. When the user clicks Merge, **BotWatch performs the merge
-   itself**, from outside that environment, so no session ever needs permission to move a branch.
-   Your own git is untouched: the check only applies when `BOTWATCH_GUARD` is set, which only
-   BotWatch's sessions have. An existing `reference-transaction` hook of yours is chained, not
-   replaced.
+   BotWatch spawned, with no exceptions and nothing to unlock. When you click Merge, **BotWatch
+   performs the merge itself**, from outside that environment, so no session ever needs permission
+   to move a branch. Your own git is untouched: the check only applies when `BOTWATCH_GUARD` is
+   set. An existing `reference-transaction` hook of yours is chained, not replaced.
 3. **The spawned environment** has no usable push target and cannot prompt for credentials.
 
 A rejected fast-forward has already written the index and working tree by the time the ref move is
 refused, so the hook undoes exactly the paths that merge wrote. Not the whole index — doing that
 destroyed staged and unstaged work in testing, which was worse than the hole it closed.
 
-A worktree is *not* one of these layers. Worktrees share refs with the repo they came from, so a
-worker can move `refs/heads/main` from inside its own tree, and the orchestrator isn't in a
-worktree at all. I said otherwise earlier and it was wrong.
+A worktree is *not* one of these layers: worktrees share refs with the repo they came from.
 
-**The remaining holes**, in the order I'd expect them to be hit:
+### Files on disk
 
+Every session BotWatch spawns is denied `Write`, `Edit` and `NotebookEdit` into your checkout by
+absolute path, and the orchestrator runs in its own directory rather than your repo.
+
+**Bash is not confined.** Measured: a worker at `bypassPermissions` running
+`echo pwned > /your/repo/file` succeeds. The deny rules cover tools, not the shell. What actually
+holds Bash back is the permission mode — at `acceptEdits` the same command is refused because
+nothing is there to approve it — so the ceiling you give workers is the real control. Confining
+the shell needs an OS sandbox, which isn't built.
+
+**Separate clones would not fix this.** They fix refs and history. A worker in a separate clone can
+still write to your checkout by absolute path, with no git involved.
+
+### The holes, in the order I'd expect them to be hit
+
+- Bash at a permissive mode can write anywhere you can. Give workers the narrowest ceiling that
+  lets them work.
 - A session with a shell can **delete the hook**, or run `BOTWATCH_GUARD= git merge`.
 - `git reset --hard` overwrites your working tree *before* touching any ref. The ref move is
-  refused and your branch is safe, but the file clobber has already happened and no hook can undo
-  it. The pattern layer denies `git reset`, which is the only thing standing in front of it.
+  refused and your branch is safe; the file clobber has already happened and no hook undoes it.
 
-Nothing that lives on the same machine as the agent, running as the same user, survives an agent
-that goes looking for it. The airtight version gives each worker a **separate clone** with no path
-back to your repo, merging by fetch on your click — written up in
-[docs/tickets/separate-clones.md](docs/tickets/separate-clones.md), not built.
+Nothing on the same machine, running as the same user, survives an agent that goes looking for it.
+Ref and history safety gets better with a clone per worker —
+[docs/tickets/separate-clones.md](docs/tickets/separate-clones.md), not built. File safety needs a
+sandbox, also not built.
 
 ## What it can't tell you
 

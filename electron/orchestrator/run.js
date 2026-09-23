@@ -12,7 +12,11 @@ const execFile = promisify(execFileCb);
 
 import * as budget from './budget.js';
 import * as policy from './policy.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import * as refguard from './refguard.js';
+import { guardSettings } from './settings.js';
 import * as worktrees from './worktrees.js';
 import { Worker } from './worker.js';
 
@@ -54,6 +58,23 @@ export class Run extends EventEmitter {
     clearInterval(this.reaper);
     for (const worker of this.workers) worker.release();
     return refguard.uninstall(this.repo).catch(() => {});
+  }
+
+  // How the orchestrator session should be launched.
+  //
+  // It must not run in the user's checkout. It is the most dangerous session in
+  // the system — a shell, broad permissions, and the user's uncommitted work
+  // sitting next to it — and it has no reason to write there: it delegates work
+  // to workers and merges through pilld. So it gets its own directory, and the
+  // same deny rules workers get.
+  launchSpec() {
+    const cwd = join(homedir(), '.claude', 'botwatch', 'runs', String(this.id ?? 'run'));
+    return {
+      cwd,
+      settings: guardSettings({ protect: [this.repo] }),
+      env: refguard.guardedEnv(),
+      note: 'the orchestrator reads the repo through its workers, and never writes to it',
+    };
   }
 
   // The user clicked Merge. BotWatch runs the merge itself, in the repo, from
@@ -105,6 +126,9 @@ export class Run extends EventEmitter {
       base,
       model,
       permissionMode: policy.clampPermission(permissionMode, this.permissionCeiling),
+      // A worker works in its worktree. The user's checkout is not its
+      // business, and cwd is not a boundary.
+      protect: [this.repo],
     });
 
     worker.on('tokens', (_w, tokens) => {

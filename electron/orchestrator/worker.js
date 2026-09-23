@@ -61,7 +61,7 @@ export function readEvent(record) {
 // --input-format stream-json the CLI waits for its prompt on stdin, so passing
 // it positionally leaves the worker hanging forever with no session and no
 // events — which is exactly what it did the first time I ran it.
-export function workerArgs({ model, permissionMode }) {
+export function workerArgs({ model, permissionMode, protect = [] }) {
   return [
     '-p',
     '--output-format',
@@ -76,7 +76,7 @@ export function workerArgs({ model, permissionMode }) {
     // The guard travels with every worker. Without it, permissionMode is the
     // only limit and a worker can merge its own branch.
     '--settings',
-    JSON.stringify(guardSettings()),
+    JSON.stringify(guardSettings({ protect })),
   ];
 }
 

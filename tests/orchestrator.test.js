@@ -11,6 +11,7 @@ import { branchName, uniqueBranch, worktreePath } from '../electron/orchestrator
 import { readEvent, workerArgs } from '../electron/orchestrator/worker.js';
 import { Run } from '../electron/orchestrator/run.js';
 import { guardedEnv } from '../electron/orchestrator/refguard.js';
+import { guardSettings } from '../electron/orchestrator/settings.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -248,4 +249,21 @@ test('pilld will not merge before the user has clicked', async () => {
   const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
   const out = await run.merge(['bw/x']);
   assert.match(out.error, /click Merge/);
+});
+
+test('spawned sessions are denied writes into the checkout being protected', () => {
+  const settings = guardSettings({ protect: ['/Users/me/work/api'] });
+  assert.deepEqual(settings.permissions.deny, [
+    'Write(//Users/me/work/api/**)',
+    'Edit(//Users/me/work/api/**)',
+    'NotebookEdit(//Users/me/work/api/**)',
+  ]);
+});
+
+test('the orchestrator runs somewhere other than the user checkout', () => {
+  const run = new Run({ repo: '/Users/me/work/api', goal: 'x', model: 'haiku' });
+  const spec = run.launchSpec();
+  assert.equal(spec.cwd.startsWith('/Users/me/work/api'), false, 'never inside the repo');
+  assert.match(spec.cwd, /\.claude\/botwatch\/runs\//);
+  assert.ok(spec.settings.permissions.deny.some((r) => r.includes('/Users/me/work/api')));
 });
