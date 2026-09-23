@@ -4,7 +4,11 @@
 // asks policy.js first, so "spawn twelve workers" or "merge now" fails here
 // rather than in the user's repo.
 
+import { execFile as execFileCb } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { promisify } from 'node:util';
+
+const execFile = promisify(execFileCb);
 
 import * as budget from './budget.js';
 import * as policy from './policy.js';
@@ -52,18 +56,26 @@ export class Run extends EventEmitter {
     return refguard.uninstall(this.repo).catch(() => {});
   }
 
-  // The user clicked Merge. The token is the only thing the ref hook accepts,
-  // and it is spent immediately either way.
-  async mergeWith(perform, { ref, sha } = {}) {
+  // The user clicked Merge. BotWatch runs the merge itself, in the repo, from
+  // an environment without BOTWATCH_GUARD — so the hook lets it through for the
+  // same reason it lets the user's own git through. No permission has to be
+  // handed to a session, which is why there is no token to forge.
+  async merge(order = []) {
     const verdict = policy.canMerge(this.state);
     if (!verdict.ok) return { error: verdict.reason };
-    if (!ref) return { error: 'a merge must name the branch it is merging into' };
-    await refguard.issueToken(this.repo, { ref, sha });
-    try {
-      return await perform();
-    } finally {
-      await refguard.consumeToken();
+
+    const branches = order.length ? order : this.workers.map((w) => w.branch);
+    const merged = [];
+    for (const branch of branches) {
+      if (!branch?.startsWith('bw/')) return { error: `refusing to merge ${branch}: not a worker branch` };
+      try {
+        await execFile('git', ['-C', this.repo, 'merge', '--no-ff', '-m', `botwatch: merge ${branch}`, branch]);
+        merged.push(branch);
+      } catch (err) {
+        return { error: `merge of ${branch} failed: ${String(err.message).split('\n')[0]}`, merged };
+      }
     }
+    return { merged };
   }
 
   get budgetExhausted() {
@@ -92,20 +104,15 @@ export class Run extends EventEmitter {
       branch,
       base,
       model,
-      // Never wider than the user's own, whatever was asked for.
       permissionMode: policy.clampPermission(permissionMode, this.permissionCeiling),
     });
 
     worker.on('tokens', (_w, tokens) => {
       budget.record(this.ledger, id, tokens);
-      // Reaching the budget pauses the run rather than letting it drift past.
       if (this.budgetExhausted) this.pauseAll('budget');
       this.emit('change', this);
     });
     worker.on('change', () => {
-      // A finished worker frees its slot. Without this the queue only moved
-      // when somebody stopped a worker by hand, so a run with more tasks than
-      // slots would sit there forever with work waiting.
       if (TERMINAL.has(worker.state)) this.drain();
       this.emit('change', this);
     });
@@ -138,8 +145,6 @@ export class Run extends EventEmitter {
     return this.workers.find((w) => w.id === id) ?? null;
   }
 
-  // The orchestrator asks the human through pilld, never directly: the brief is
-  // explicit that worker questions go up the tree, not to the user's face.
   ask(question, options = []) {
     this.pendingQuestion = { question, options, at: Date.now() };
     this.emit('change', this);
@@ -154,7 +159,7 @@ export class Run extends EventEmitter {
 
   // A worker that finished and has not been spoken to since is just a live
   // process holding memory. `now` is a parameter so this is testable without
-  // waiting two minutes.
+  // waiting five minutes.
   reap(now = Date.now(), idleMs = 300_000) {
     let released = 0;
     for (const worker of this.workers) {

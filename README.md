@@ -89,29 +89,29 @@ Three layers, weakest first, and I'd rather name the hole than imply there isn't
 1. **A PreToolUse hook** denies `git merge`, `push`, `rebase`, `reset`, `cherry-pick`, forced
    branch moves and `update-ref` by pattern. It catches the obvious spelling and nothing more:
    `g=merge; git $g main` walks straight past it.
-2. **A `reference-transaction` hook** rejects any move of a protected ref from a session BotWatch
-   spawned, whatever produced it — merge, reset, `update-ref`, a command spelled to dodge the
-   regex. Protected refs move only while a one-time token is present, and that token is written
-   on your Merge click and deleted straight after. Your own git is untouched: the check only
-   applies when `BOTWATCH_GUARD` is set, which only BotWatch's sessions have. An existing
-   `reference-transaction` hook of yours is chained, not replaced.
+2. **A `reference-transaction` hook** refuses *any* move of a protected ref from a session
+   BotWatch spawned — merge, reset, `update-ref`, or a command spelled to dodge the regex — with
+   no exceptions and nothing to unlock. When the user clicks Merge, **BotWatch performs the merge
+   itself**, from outside that environment, so no session ever needs permission to move a branch.
+   Your own git is untouched: the check only applies when `BOTWATCH_GUARD` is set, which only
+   BotWatch's sessions have. An existing `reference-transaction` hook of yours is chained, not
+   replaced.
 3. **The spawned environment** has no usable push target and cannot prompt for credentials.
+
+A rejected fast-forward has already written the index and working tree by the time the ref move is
+refused, so the hook undoes exactly the paths that merge wrote. Not the whole index — doing that
+destroyed staged and unstaged work in testing, which was worse than the hole it closed.
 
 A worktree is *not* one of these layers. Worktrees share refs with the repo they came from, so a
 worker can move `refs/heads/main` from inside its own tree, and the orchestrator isn't in a
 worktree at all. I said otherwise earlier and it was wrong.
 
-The merge token is bound to one ref, one target commit and about a minute of life, and it lives
-outside the repo — an agent listing `.git` doesn't find it, and a token issued to fast-forward
-`main` to one commit won't move any other branch anywhere.
-
 **The remaining holes**, in the order I'd expect them to be hit:
 
 - A session with a shell can **delete the hook**, or run `BOTWATCH_GUARD= git merge`.
-- It can **forge the token**: it runs as you, so it can write `~/.claude/botwatch/merge-token`.
-  Moving it out of the repo removes the discoverability, not the permission. Binding it to a ref
-  and a SHA means a forged token still has to name exactly what it wants, which is a narrower
-  blast radius, not a barrier.
+- `git reset --hard` overwrites your working tree *before* touching any ref. The ref move is
+  refused and your branch is safe, but the file clobber has already happened and no hook can undo
+  it. The pattern layer denies `git reset`, which is the only thing standing in front of it.
 
 Nothing that lives on the same machine as the agent, running as the same user, survives an agent
 that goes looking for it. The airtight version gives each worker a **separate clone** with no path

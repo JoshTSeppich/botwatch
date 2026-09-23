@@ -7,38 +7,57 @@
 //
 // git's reference-transaction hook fires on every ref update whatever produced
 // it — merge, reset, branch -f, update-ref, a push, or a command spelled so the
-// regex misses it. Protected refs can only move while a one-time token issued
-// by the user's Merge click is present.
+// regex misses it. Protected refs cannot move from a spawned session at all:
+// BotWatch performs the merge itself when the user clicks Merge, from outside
+// the guarded environment, so no session ever needs permission and there is no
+// permission file to forge.
 
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
 const HOOK = `#!/bin/sh
-# Installed by BotWatch. Rejects moves of protected branches from sessions it
-# spawned. Your own git is untouched: the check only applies when BOTWATCH_GUARD
-# is set, which BotWatch puts in the worker and orchestrator environment.
+# Installed by BotWatch. Refuses to let a session it spawned move any protected
+# branch, with no exception: BotWatch performs the merge itself, from outside
+# this environment, when the user clicks Merge. Your own git is untouched —
+# the check only applies when BOTWATCH_GUARD is set.
 input=$(cat)
 common=\${GIT_COMMON_DIR:-\${GIT_DIR:-.git}}
 chained="$common/hooks/reference-transaction.botwatch-chained"
 marker="$common/botwatch-abort-cleanup"
-token="$HOME/.claude/botwatch/merge-token"
 
 if [ -x "$chained" ]; then
   printf '%s\\n' "$input" | "$chained" "$@" || exit $?
 fi
 
 # A rejected fast-forward has already written the index and working tree by the
-# time the ref move is refused, which leaves the worker's files staged on the
-# user's branch. Undo exactly that, once the transaction is over.
+# time the ref move is refused, leaving the worker's files staged on the user's
+# branch. Undo exactly the paths that merge wrote — never the whole index, which
+# would throw away whatever else the user had in progress.
 if [ "$1" = "aborted" ]; then
   if [ -f "$marker" ]; then
+    while read -r old new; do
+      [ -n "$new" ] || continue
+      # Both ends must be real commits. A single-ended diff compares the
+      # WORKING TREE against a commit, which lists every file the user has in
+      # progress — and "restoring" those is how this cleanup destroyed staged
+      # and unstaged work the first time.
+      git rev-parse --verify --quiet "$old^{commit}" >/dev/null 2>&1 || continue
+      git rev-parse --verify --quiet "$new^{commit}" >/dev/null 2>&1 || continue
+      git diff --name-only "$old" "$new" 2>/dev/null | while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        if git cat-file -e "HEAD:$path" 2>/dev/null; then
+          git checkout -q HEAD -- "$path" 2>/dev/null
+        else
+          git reset -q HEAD -- "$path" 2>/dev/null
+          rm -f "$path"
+        fi
+      done
+    done < "$marker"
     rm -f "$marker"
-    git read-tree --reset -u HEAD 2>/dev/null
   fi
   exit 0
 fi
@@ -46,19 +65,21 @@ fi
 [ "$1" = "prepared" ] || exit 0
 [ -n "$BOTWATCH_GUARD" ] || exit 0
 
-now=$(date +%s)
 blocked=0
+: > "$marker.tmp"
 while read -r old new ref; do
   [ -n "$ref" ] || continue
   case "$ref" in
     refs/heads/bw/*) ;;
     refs/heads/*)
-      if awk -v r="$ref" -v s="$new" -v n="$now" \
-        '$1==r && ($2==s || $2=="*") && $3>n { ok=1 } END { exit !ok }' "$token" 2>/dev/null; then
-        continue
-      fi
       echo "BotWatch: refusing to move $ref from an agent session." >&2
-      echo "Branches reach $ref by the user clicking Merge, not from a session." >&2
+      echo "Branches move when the user clicks Merge, and BotWatch performs it." >&2
+      # Only a transaction that wrote the tree needs undoing. update-ref and
+      # friends move a ref and nothing else, so there is nothing to restore and
+      # every reason not to touch the user's files.
+      if [ "$(git rev-parse --verify --quiet HEAD 2>/dev/null)" = "$old" ] && [ "$ref" = "$(git symbolic-ref -q HEAD 2>/dev/null)" ]; then
+        printf '%s %s\\n' "$old" "$new" >> "$marker.tmp"
+      fi
       blocked=1
       ;;
   esac
@@ -66,7 +87,7 @@ done <<INPUT
 $input
 INPUT
 
-[ "$blocked" -eq 1 ] && : > "$marker"
+if [ "$blocked" -eq 1 ]; then mv "$marker.tmp" "$marker"; else rm -f "$marker.tmp"; fi
 exit $blocked
 `;
 
@@ -99,32 +120,6 @@ export async function uninstall(repo) {
   const chained = `${path}.botwatch-chained`;
   await rm(path, { force: true });
   await rename(chained, path).catch(() => {});
-}
-
-// The token lives outside the repo. Inside it, an agent finds it by listing
-// .git and forges it with one echo — and the refusal message tells it what to
-// look for. Outside is not out of reach (a shell runs as the same user), but it
-// is no longer discoverable from the tree the agent is working in.
-export function tokenPath() {
-  return join(homedir(), '.claude', 'botwatch', 'merge-token');
-}
-
-// Bound to one ref and one target commit, with a short life. A token issued to
-// fast-forward main to abc123 will not move main anywhere else, and will not
-// move any other branch. `sha` may be '*' for a true merge, whose commit does
-// not exist until git makes it — a wider grant, and the reason the window is
-// measured in seconds.
-export async function issueToken(repo, { ref, sha = '*', ttlMs = 60_000 } = {}) {
-  if (!ref) throw new Error('a merge token must name the ref it is for');
-  const path = tokenPath();
-  await mkdir(join(homedir(), '.claude', 'botwatch'), { recursive: true });
-  const expiry = Math.floor((Date.now() + ttlMs) / 1000);
-  await writeFile(path, `${ref} ${sha} ${expiry}\n`, { encoding: 'utf8', mode: 0o600 });
-  return path;
-}
-
-export async function consumeToken() {
-  await rm(tokenPath(), { force: true });
 }
 
 // The environment every spawned session gets: marks it as an agent session for

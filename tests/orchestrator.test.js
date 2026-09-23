@@ -10,9 +10,7 @@ import * as policy from '../electron/orchestrator/policy.js';
 import { branchName, uniqueBranch, worktreePath } from '../electron/orchestrator/worktrees.js';
 import { readEvent, workerArgs } from '../electron/orchestrator/worker.js';
 import { Run } from '../electron/orchestrator/run.js';
-import * as refguard from '../electron/orchestrator/refguard.js';
 import { guardedEnv } from '../electron/orchestrator/refguard.js';
-import { readFile } from 'node:fs/promises';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -230,27 +228,24 @@ test('the guarded environment marks the session and removes any push target', ()
   assert.equal(env.PATH, '/usr/bin', 'the rest of the environment is passed through');
 });
 
-test('a merge token names one ref, one target commit and an expiry', async () => {
-  const path = await refguard.issueToken('/tmp', { ref: 'refs/heads/main', sha: 'abc123', ttlMs: 60_000 });
-  const [ref, sha, expiry] = (await readFile(path, 'utf8')).trim().split(' ');
-  assert.equal(ref, 'refs/heads/main');
-  assert.equal(sha, 'abc123');
-  assert.ok(Number(expiry) > Math.floor(Date.now() / 1000), 'the token must expire in the future');
-  await refguard.consumeToken();
+test('the guarded environment marks the session and removes any push target', () => {
+  const env = guardedEnv({ PATH: '/usr/bin' });
+  assert.equal(env.BOTWATCH_GUARD, '1', 'the ref hook keys off this');
+  assert.equal(env.GIT_CONFIG_KEY_0, 'remote.origin.pushurl');
+  assert.match(env.GIT_CONFIG_VALUE_0, /botwatch-push-disabled/);
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0', 'never sit waiting on a credential prompt');
+  assert.equal(env.PATH, '/usr/bin', 'the rest of the environment is passed through');
 });
 
-test('a token will not be issued without a ref to bind it to', async () => {
-  await assert.rejects(() => refguard.issueToken('/tmp', {}), /must name the ref/);
-});
-
-test('the token lives outside the repo an agent is working in', () => {
-  assert.equal(refguard.tokenPath().includes('/.git/'), false);
-  assert.match(refguard.tokenPath(), /\.claude\/botwatch\/merge-token$/);
-});
-
-test('a merge must say which branch it is merging into', async () => {
+test('pilld refuses to merge anything that is not a worker branch', async () => {
   const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
   run.userApprovedMerge = true;
-  const out = await run.mergeWith(async () => ({ merged: true }), {});
-  assert.match(out.error, /name the branch/);
+  const out = await run.merge(['main']);
+  assert.match(out.error, /not a worker branch/);
+});
+
+test('pilld will not merge before the user has clicked', async () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  const out = await run.merge(['bw/x']);
+  assert.match(out.error, /click Merge/);
 });
