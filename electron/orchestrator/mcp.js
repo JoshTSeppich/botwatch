@@ -54,12 +54,17 @@ async function call(name, args) {
   if (name === 'message_worker') {
     const worker = run.find(args.id);
     if (!worker) return { error: 'no such worker' };
-    return { delivered: worker.message(args.text) };
+    // A released worker cannot be reached. Say so plainly rather than
+    // reporting a quiet false the model has to interpret.
+    const delivered = worker.message(args.text);
+    return delivered
+      ? { delivered: true }
+      : { error: `worker ${args.id} has been released; spawn a new one` };
   }
   if (name === 'worker_diff') {
     const worker = run.find(args.id);
     if (!worker) return { error: 'no such worker' };
-    return worktrees.diff(run.repo, worker.branch);
+    return worktrees.diff(worker.cwd, worker.base ?? 'main');
   }
   if (name === 'ask_human') return run.ask(args.question, args.options ?? []);
   if (name === 'wait_for') return waitFor(args.ids ?? [], args.until ?? 'done');

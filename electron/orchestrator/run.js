@@ -29,6 +29,19 @@ export class Run extends EventEmitter {
     this.userApprovedMerge = false;
     this.pendingQuestion = null;
     this.nextId = 1;
+    // reap() was dead code until this line: nothing called it, so finished
+    // workers stayed resident for the life of the run. unref so the timer
+    // never keeps the process alive on its own.
+    this.reaper = setInterval(() => this.reap(), 15_000);
+    this.reaper.unref?.();
+  }
+
+  // Releasing closes the worker's stdin, which is what makes the CLI exit. It
+  // does not just free the slot: the slot was already free when the task
+  // finished, and that is exactly why the processes piled up.
+  close() {
+    clearInterval(this.reaper);
+    for (const worker of this.workers) worker.release();
   }
 
   get budgetExhausted() {
@@ -49,12 +62,13 @@ export class Run extends EventEmitter {
     if (!verdict.ok && !verdict.queue) return { error: verdict.reason };
 
     const id = `w${this.nextId++}`;
-    const { branch, path } = await worktrees.create(this.repo, `${id}-${task}`);
+    const { branch, path, base } = await worktrees.create(this.repo, `${id}-${task}`);
     const worker = new Worker({
       id,
       task,
       cwd: path,
       branch,
+      base,
       model,
       // Never wider than the user's own, whatever was asked for.
       permissionMode: policy.clampPermission(permissionMode, this.permissionCeiling),

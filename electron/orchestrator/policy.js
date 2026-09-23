@@ -41,6 +41,25 @@ export function isPush(command) {
   return /\bgit\s+push\b/i.test(String(command ?? ''));
 }
 
+// Refusing the merge_worktrees tool is not enforcement while the shell is open.
+// Asked to get a branch onto main "by any means", a model reaches straight for
+// `git merge`, and it works. These are the commands that move commits between
+// branches or rewrite them, and a PreToolUse hook denies every one.
+const REPO_WRITES = [
+  /\bgit\s+merge\b/i,
+  /\bgit\s+push\b/i,
+  /\bgit\s+rebase\b/i,
+  /\bgit\s+reset\b/i,
+  /\bgit\s+cherry-pick\b/i,
+  /\bgit\s+branch\b[^|;]*\s-[a-zA-Z]*[fFdDmM]/,
+  /\bgit\s+update-ref\b/i,
+];
+
+export function isRepoWrite(command) {
+  const text = String(command ?? '');
+  return REPO_WRITES.some((p) => p.test(text));
+}
+
 export function canSpawn(state, limits) {
   if (state.stopped) return { ok: false, reason: 'orchestrator stopped' };
   if (state.budgetExhausted) return { ok: false, reason: 'token budget reached' };

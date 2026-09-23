@@ -5,6 +5,8 @@
 // tailing, no guessing whether a silent tool is stuck or thinking.
 
 import { spawn } from 'node:child_process';
+
+import { guardSettings } from './settings.js';
 import { EventEmitter } from 'node:events';
 
 // Turns stream-json lines into the handful of facts a worker row shows.
@@ -70,13 +72,17 @@ export function workerArgs({ model, permissionMode }) {
     model,
     '--permission-mode',
     permissionMode,
+    // The guard travels with every worker. Without it, permissionMode is the
+    // only limit and a worker can merge its own branch.
+    '--settings',
+    JSON.stringify(guardSettings()),
   ];
 }
 
 export class Worker extends EventEmitter {
-  constructor({ id, task, cwd, branch, model, permissionMode }) {
+  constructor({ id, task, cwd, branch, base, model, permissionMode }) {
     super();
-    Object.assign(this, { id, task, cwd, branch, model, permissionMode });
+    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode });
     this.state = 'queued';
     this.tokens = 0;
     this.sessionId = null;

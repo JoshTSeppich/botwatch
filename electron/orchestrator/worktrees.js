@@ -44,11 +44,21 @@ export async function uniqueBranch(repo, task, exists = branchExists) {
   return `${base}-${Date.now().toString(36)}`;
 }
 
+// The branch the worktree forks from, captured at creation. Hardcoding `main`
+// meant every diff on a `master` repo came back silently empty.
+export async function currentBranch(repo) {
+  const { stdout } = await run('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD']).catch(
+    () => ({ stdout: 'main' }),
+  );
+  return stdout.trim() || 'main';
+}
+
 export async function create(repo, task) {
   const branch = await uniqueBranch(repo, task);
   const path = worktreePath(repo, branch);
+  const base = await currentBranch(repo);
   await run('git', ['-C', repo, 'worktree', 'add', '-b', branch, path], { timeout: 30_000 });
-  return { branch, path };
+  return { branch, path, base };
 }
 
 export async function remove(repo, path) {
@@ -74,18 +84,43 @@ export async function list(repo) {
 }
 
 // What a worker actually changed, for the review-and-merge screen.
-export async function diff(repo, branch) {
-  const { stdout } = await run('git', ['-C', repo, 'diff', '--numstat', `main...${branch}`]).catch(
-    () => ({ stdout: '' }),
-  );
+//
+// Read inside the worktree, not the main repo, and against the base branch
+// rather than a committed tip: a worker edits files and often never commits, so
+// a committed-only diff shows nothing for a worker that did a full day's work.
+// Untracked files are counted too, for the same reason.
+export async function diff(worktreePath, base = 'main') {
+  const tracked = await run('git', ['-C', worktreePath, 'diff', '--numstat', base]).catch(() => ({
+    stdout: '',
+  }));
+
   let added = 0;
   let removed = 0;
   const files = [];
-  for (const line of stdout.trim().split('\n').filter(Boolean)) {
+  for (const line of tracked.stdout.trim().split('\n').filter(Boolean)) {
     const [a, r, file] = line.split('\t');
     added += Number(a) || 0;
     removed += Number(r) || 0;
     files.push(file);
   }
+
+  const untracked = await run('git', [
+    '-C',
+    worktreePath,
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+  ]).catch(() => ({ stdout: '' }));
+
+  for (const file of untracked.stdout.trim().split('\n').filter(Boolean)) {
+    // awk, not `wc -l`: wc counts newlines, so a file written without a
+    // trailing one reports zero lines and a real change looks like nothing.
+    const counted = await run('awk', ['END{print NR}', `${worktreePath}/${file}`]).catch(() => ({
+      stdout: '0',
+    }));
+    added += Number(counted.stdout.trim()) || 0;
+    files.push(file);
+  }
+
   return { added, removed, files };
 }

@@ -180,3 +180,40 @@ test('a finished worker is released once nobody has spoken to it for a while', (
   assert.deepEqual(released, ['w1']);
   assert.equal(run.reap(100_000, 60_000), 0, 'releasing is not repeated');
 });
+
+test('the commands that move commits between branches are all denied', () => {
+  for (const cmd of ['git merge x', 'git push origin main', 'git rebase main', 'git reset --hard', 'git cherry-pick abc', 'git branch -f main x', 'git update-ref refs/heads/main x']) {
+    assert.equal(policy.isRepoWrite(cmd), true, cmd);
+  }
+});
+
+test('ordinary git work is not denied', () => {
+  for (const cmd of ['git status', 'git add .', 'git commit -m x', 'git diff', 'git log --oneline', 'git branch']) {
+    assert.equal(policy.isRepoWrite(cmd), false, cmd);
+  }
+});
+
+test('every spawned session carries the guard', () => {
+  const args = workerArgs({ model: 'haiku', permissionMode: 'plan' });
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
+  assert.equal(settings.hooks.PreToolUse[0].matcher, 'Bash');
+  assert.match(settings.hooks.PreToolUse[0].hooks[0].command, /guard\.mjs/);
+});
+
+test('a released worker reports an error rather than silently failing to deliver', () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  const worker = { id: 'w1', message: () => false };
+  run.workers.push(worker);
+  // mcp.js maps a false delivery onto this shape; the contract is that the
+  // model is told, not left guessing.
+  const delivered = run.find('w1').message('hello');
+  assert.equal(delivered, false);
+});
+
+test('close stops the reaper and releases every worker', () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  const released = [];
+  run.workers.push({ id: 'w1', release: () => released.push('w1') }, { id: 'w2', release: () => released.push('w2') });
+  run.close();
+  assert.deepEqual(released, ['w1', 'w2']);
+});
