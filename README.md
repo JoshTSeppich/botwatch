@@ -101,10 +101,22 @@ A worktree is *not* one of these layers. Worktrees share refs with the repo they
 worker can move `refs/heads/main` from inside its own tree, and the orchestrator isn't in a
 worktree at all. I said otherwise earlier and it was wrong.
 
-**The remaining hole:** a session with a shell can delete the hook, or run `BOTWATCH_GUARD= git
-merge`. Nothing in-repo survives an agent that goes looking for it. The airtight version gives
-each worker a **separate clone** with no path back to your repo, and merges by fetching from that
-clone on your click. That's the right answer and I haven't built it yet.
+The merge token is bound to one ref, one target commit and about a minute of life, and it lives
+outside the repo — an agent listing `.git` doesn't find it, and a token issued to fast-forward
+`main` to one commit won't move any other branch anywhere.
+
+**The remaining holes**, in the order I'd expect them to be hit:
+
+- A session with a shell can **delete the hook**, or run `BOTWATCH_GUARD= git merge`.
+- It can **forge the token**: it runs as you, so it can write `~/.claude/botwatch/merge-token`.
+  Moving it out of the repo removes the discoverability, not the permission. Binding it to a ref
+  and a SHA means a forged token still has to name exactly what it wants, which is a narrower
+  blast radius, not a barrier.
+
+Nothing that lives on the same machine as the agent, running as the same user, survives an agent
+that goes looking for it. The airtight version gives each worker a **separate clone** with no path
+back to your repo, merging by fetch on your click — written up in
+[docs/tickets/separate-clones.md](docs/tickets/separate-clones.md), not built.
 
 ## What it can't tell you
 

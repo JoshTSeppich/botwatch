@@ -12,6 +12,7 @@
 
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -24,31 +25,48 @@ const HOOK = `#!/bin/sh
 input=$(cat)
 common=\${GIT_COMMON_DIR:-\${GIT_DIR:-.git}}
 chained="$common/hooks/reference-transaction.botwatch-chained"
+marker="$common/botwatch-abort-cleanup"
+token="$HOME/.claude/botwatch/merge-token"
 
 if [ -x "$chained" ]; then
   printf '%s\\n' "$input" | "$chained" "$@" || exit $?
 fi
 
+# A rejected fast-forward has already written the index and working tree by the
+# time the ref move is refused, which leaves the worker's files staged on the
+# user's branch. Undo exactly that, once the transaction is over.
+if [ "$1" = "aborted" ]; then
+  if [ -f "$marker" ]; then
+    rm -f "$marker"
+    git read-tree --reset -u HEAD 2>/dev/null
+  fi
+  exit 0
+fi
+
 [ "$1" = "prepared" ] || exit 0
 [ -n "$BOTWATCH_GUARD" ] || exit 0
 
+now=$(date +%s)
 blocked=0
 while read -r old new ref; do
   [ -n "$ref" ] || continue
   case "$ref" in
     refs/heads/bw/*) ;;
     refs/heads/*)
-      if [ ! -f "$common/botwatch-merge-token" ]; then
-        echo "BotWatch: refusing to move $ref from an agent session." >&2
-        echo "Branches reach $ref by the user clicking Merge, not from a session." >&2
-        blocked=1
+      if awk -v r="$ref" -v s="$new" -v n="$now" \
+        '$1==r && ($2==s || $2=="*") && $3>n { ok=1 } END { exit !ok }' "$token" 2>/dev/null; then
+        continue
       fi
+      echo "BotWatch: refusing to move $ref from an agent session." >&2
+      echo "Branches reach $ref by the user clicking Merge, not from a session." >&2
+      blocked=1
       ;;
   esac
 done <<INPUT
 $input
 INPUT
 
+[ "$blocked" -eq 1 ] && : > "$marker"
 exit $blocked
 `;
 
@@ -83,18 +101,30 @@ export async function uninstall(repo) {
   await rename(chained, path).catch(() => {});
 }
 
-// Issued on the user's click and consumed by the merge. A file rather than an
-// env var because the hook runs in git's environment, not ours.
-export async function issueToken(repo) {
-  const common = await commonDir(repo);
-  const token = join(common, 'botwatch-merge-token');
-  await writeFile(token, `${Date.now()}\n`, 'utf8');
-  return token;
+// The token lives outside the repo. Inside it, an agent finds it by listing
+// .git and forges it with one echo — and the refusal message tells it what to
+// look for. Outside is not out of reach (a shell runs as the same user), but it
+// is no longer discoverable from the tree the agent is working in.
+export function tokenPath() {
+  return join(homedir(), '.claude', 'botwatch', 'merge-token');
 }
 
-export async function consumeToken(repo) {
-  const common = await commonDir(repo);
-  await rm(join(common, 'botwatch-merge-token'), { force: true });
+// Bound to one ref and one target commit, with a short life. A token issued to
+// fast-forward main to abc123 will not move main anywhere else, and will not
+// move any other branch. `sha` may be '*' for a true merge, whose commit does
+// not exist until git makes it — a wider grant, and the reason the window is
+// measured in seconds.
+export async function issueToken(repo, { ref, sha = '*', ttlMs = 60_000 } = {}) {
+  if (!ref) throw new Error('a merge token must name the ref it is for');
+  const path = tokenPath();
+  await mkdir(join(homedir(), '.claude', 'botwatch'), { recursive: true });
+  const expiry = Math.floor((Date.now() + ttlMs) / 1000);
+  await writeFile(path, `${ref} ${sha} ${expiry}\n`, { encoding: 'utf8', mode: 0o600 });
+  return path;
+}
+
+export async function consumeToken() {
+  await rm(tokenPath(), { force: true });
 }
 
 // The environment every spawned session gets: marks it as an agent session for

@@ -54,14 +54,15 @@ export class Run extends EventEmitter {
 
   // The user clicked Merge. The token is the only thing the ref hook accepts,
   // and it is spent immediately either way.
-  async mergeWith(perform) {
+  async mergeWith(perform, { ref, sha } = {}) {
     const verdict = policy.canMerge(this.state);
     if (!verdict.ok) return { error: verdict.reason };
-    await refguard.issueToken(this.repo);
+    if (!ref) return { error: 'a merge must name the branch it is merging into' };
+    await refguard.issueToken(this.repo, { ref, sha });
     try {
       return await perform();
     } finally {
-      await refguard.consumeToken(this.repo);
+      await refguard.consumeToken();
     }
   }
 
