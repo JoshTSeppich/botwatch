@@ -1,5 +1,5 @@
 {
-  "name": "session-pill",
+  "name": "botwatch",
   "version": "0.1.0",
   "description": "An always-on-top pill that shows what every Claude Code session is doing.",
   "type": "module",
@@ -14,13 +14,13 @@
     "electron": "^44.4.3",
     "electron-builder": "^26.15.3"
   },
-  "productName": "Session Pill",
+  "productName": "BotWatch",
   "license": "MIT",
   "author": "Joshua Seppich <joshuatseppich@gmail.com>",
-  "repository": "github.com/JoshTSeppich/session-pill",
+  "repository": "github.com/JoshTSeppich/botwatch",
   "build": {
-    "appId": "io.github.joshtseppich.session-pill",
-    "productName": "Session Pill",
+    "appId": "io.github.joshtseppich.botwatch",
+    "productName": "BotWatch",
     "files": [
       "electron/**/*",
       "src/**/*",
@@ -47,12 +47,12 @@
       ],
       "identity": null,
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "Session Pill needs this to see which terminal window each Claude Code session is in, and to bring one to the front when you click it.",
+        "NSAppleEventsUsageDescription": "BotWatch needs this to see which terminal window each Claude Code session is in, and to bring one to the front when you click it.",
         "LSUIElement": true
       }
     },
     "dmg": {
-      "title": "Session Pill"
+      "title": "BotWatch"
     },
     "afterPack": "build/after-pack.cjs"
   },

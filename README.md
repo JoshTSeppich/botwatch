@@ -1,4 +1,4 @@
-# Session Pill
+# BotWatch
 
 I run four or five Claude Code sessions at once and I kept losing track of them. Which one is
 working, which one has been sitting there for ten minutes waiting for me to answer a question,
@@ -12,6 +12,14 @@ window to the front.
 It reads what Claude Code already writes to `~/.claude`. It does not talk to the network, and it
 has no telemetry.
 
+## Why this exists
+
+I built this as a take-home for a company I'm not naming. The brief was a design spec — sizes,
+colours, states, motion, down to the pixel — and this is my implementation of it. I've kept
+working on it since because I actually use it.
+
+Where I departed from the spec, `docs/design-notes.md` says so and why.
+
 ## Install
 
 Download the `.dmg` from [Releases](../../releases), drag it to Applications, open it.
@@ -19,7 +27,7 @@ Download the `.dmg` from [Releases](../../releases), drag it to Applications, op
 It is not notarised — I don't pay for a Developer ID — so the first open needs a right-click:
 
 ```
-right-click Session Pill.app → Open → Open
+right-click BotWatch.app → Open → Open
 ```
 
 Do that once and macOS remembers.
@@ -31,8 +39,8 @@ gives you the same menu.
 If you'd rather build it yourself:
 
 ```sh
-git clone https://github.com/JoshTSeppich/session-pill
-cd session-pill
+git clone https://github.com/JoshTSeppich/botwatch
+cd botwatch
 npm install
 npm start          # run it
 npm run dist       # build the .dmg into dist/

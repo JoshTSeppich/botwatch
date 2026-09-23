@@ -163,7 +163,7 @@ app.whenReady().then(async () => {
   // no way to quit the app at all. The menu bar is the one place an accessory
   // app is guaranteed to be reachable.
   tray = new Tray(join(here, 'assets', 'trayTemplate.png'));
-  tray.setToolTip('Session Pill');
+  tray.setToolTip('BotWatch');
   tray.setContextMenu(pillMenu());
 
   // Right-clicking the pill offers the same menu, for when the pill is what
@@ -229,7 +229,7 @@ function pillMenu() {
       },
     },
     { type: 'separator' },
-    { label: 'Quit Session Pill', click: () => app.quit() },
+    { label: 'Quit BotWatch', click: () => app.quit() },
   ]);
 }
 
