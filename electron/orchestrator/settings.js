@@ -6,7 +6,7 @@
 // worktree or a separate clone does nothing to stop `Write` with an absolute
 // path pointed at your desktop.
 
-import { fileURLToPath } from 'node:url';
+import { scriptShellCommand } from './runtime.js';
 
 // Domains a worker genuinely needs. Not github.com: a worker has no business
 // reaching a remote, and leaving it out closes push at a second layer, below
@@ -23,7 +23,7 @@ const WORKER_DOMAINS = [
 ];
 
 export function guardSettings({ protect = [], domains = WORKER_DOMAINS } = {}) {
-  const guard = fileURLToPath(new URL('./guard.mjs', import.meta.url));
+  const guard = scriptShellCommand(new URL('./guard.mjs', import.meta.url));
   const deny = [];
   for (const path of protect) {
     // `//` is an absolute path in a permission rule.
@@ -41,7 +41,7 @@ export function guardSettings({ protect = [], domains = WORKER_DOMAINS } = {}) {
       PreToolUse: [
         {
           matcher: 'Bash',
-          hooks: [{ type: 'command', command: `node ${JSON.stringify(guard)}` }],
+          hooks: [{ type: 'command', command: guard }],
         },
       ],
     },
