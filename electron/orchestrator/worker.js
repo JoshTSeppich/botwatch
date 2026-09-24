@@ -61,6 +61,19 @@ export function readEvent(record) {
 // --input-format stream-json the CLI waits for its prompt on stdin, so passing
 // it positionally leaves the worker hanging forever with no session and no
 // events — which is exactly what it did the first time I ran it.
+// Models commit by habit. Without this a worker spends tokens fighting
+// index.lock, and a determined one goes looking for a way around the sandbox.
+// Telling it plainly is cheaper than letting it find out.
+export const WORKER_BRIEF = [
+  'You are a BotWatch worker in a git worktree on your own branch.',
+  'Do not run git commit, git add, git merge, git push, git rebase or git reset.',
+  'You cannot commit: the repository is read-only to you and the attempt will fail.',
+  'BotWatch snapshots your working tree to your branch when you finish. Just edit files.',
+  'git status and git diff are fine, and are how you check your own work.',
+  '',
+  'Your task:',
+].join('\n');
+
 export function workerArgs({ model, permissionMode, protect = [] }) {
   return [
     '-p',
@@ -98,7 +111,7 @@ export class Worker extends EventEmitter {
       env: guardedEnv(),
     });
     this.state = 'running';
-    this.message(this.task);
+    this.message(`${WORKER_BRIEF}\n${this.task}`);
 
     let buffer = '';
     this.child.stdout.on('data', (chunk) => {

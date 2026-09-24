@@ -22,6 +22,15 @@ import { Worker } from './worker.js';
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
 
+// A commit subject, not a transcript of the prompt. First line, first sentence,
+// trimmed to something a git log can show.
+export function snapshotMessage(worker) {
+  const first = String(worker.task ?? worker.branch ?? 'work').split('\n')[0].trim();
+  const sentence = first.split(/(?<=[.!?])\s/)[0].replace(/[.\s]+$/, '');
+  const subject = sentence.length > 60 ? `${sentence.slice(0, 59).trimEnd()}\u2026` : sentence;
+  return `botwatch(${worker.id ?? 'w'}): ${subject || 'worker changes'}`;
+}
+
 export class Run extends EventEmitter {
   // drain() emits the event that triggers drain(), so it needs to know when it
   // is already inside itself.
@@ -60,6 +69,20 @@ export class Run extends EventEmitter {
     return refguard.uninstall(this.repo).catch(() => {});
   }
 
+  // Snapshots a worker's tree the moment its turn ends, not when the user
+  // clicks Merge. Review, the test result and the diff all need a real commit
+  // to point at before anyone decides whether to merge — and a follow-up
+  // message produces a follow-up turn, which gets its own snapshot.
+  async snapshot(worker) {
+    if (!worker?.doneAt || worker.snapshottedFor === worker.doneAt) return null;
+    worker.snapshottedFor = worker.doneAt;
+    const result = await this.commitWorktree(worker.branch).catch((err) => ({
+      error: String(err?.message ?? err),
+    }));
+    if (result?.committed) this.emit('change', this);
+    return result;
+  }
+
   // Turns a worker's edits into a commit on its own branch. Runs as pilld, not
   // as the worker, so nothing in the sandbox has to be loosened for it.
   async commitWorktree(branch) {
@@ -68,7 +91,7 @@ export class Run extends EventEmitter {
     const { stdout } = await execFile('git', ['-C', worker.cwd, 'status', '--porcelain']);
     if (!stdout.trim()) return { committed: false, reason: 'nothing to commit' };
     await execFile('git', ['-C', worker.cwd, 'add', '-A']);
-    await execFile('git', ['-C', worker.cwd, 'commit', '-m', `botwatch: ${worker.task ?? branch}`.slice(0, 200)]);
+    await execFile('git', ['-C', worker.cwd, 'commit', '-m', snapshotMessage(worker)]);
     return { committed: true };
   }
 
@@ -101,10 +124,6 @@ export class Run extends EventEmitter {
     const merged = [];
     for (const branch of branches) {
       if (!branch?.startsWith('bw/')) return { error: `refusing to merge ${branch}: not a worker branch` };
-      // Workers do not commit. The sandbox keeps them out of the main repo's
-      // .git, which is the point — so pilld commits their worktree here, from
-      // outside the sandbox, at the moment the user asks for the work.
-      await this.commitWorktree(branch).catch(() => {});
       try {
         await execFile('git', ['-C', this.repo, 'merge', '--no-ff', '-m', `botwatch: merge ${branch}`, branch]);
         merged.push(branch);
@@ -153,7 +172,10 @@ export class Run extends EventEmitter {
       this.emit('change', this);
     });
     worker.on('change', () => {
-      if (TERMINAL.has(worker.state)) this.drain();
+      if (TERMINAL.has(worker.state)) {
+        this.drain();
+        void this.snapshot(worker);
+      }
       this.emit('change', this);
     });
     this.workers.push(worker);

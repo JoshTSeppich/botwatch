@@ -8,8 +8,8 @@ import { test } from 'node:test';
 import * as budget from '../electron/orchestrator/budget.js';
 import * as policy from '../electron/orchestrator/policy.js';
 import { branchName, uniqueBranch, worktreePath } from '../electron/orchestrator/worktrees.js';
-import { readEvent, workerArgs } from '../electron/orchestrator/worker.js';
-import { Run } from '../electron/orchestrator/run.js';
+import { readEvent, workerArgs, WORKER_BRIEF } from '../electron/orchestrator/worker.js';
+import { Run, snapshotMessage } from '../electron/orchestrator/run.js';
 import { guardedEnv } from '../electron/orchestrator/refguard.js';
 import { guardSettings } from '../electron/orchestrator/settings.js';
 
@@ -279,4 +279,43 @@ test('workers cannot reach a git remote through the sandbox network allowlist', 
   const domains = guardSettings({}).sandbox.network.allowedDomains;
   assert.ok(domains.includes('api.anthropic.com'), 'the model has to be reachable');
   assert.equal(domains.some((d) => d.includes('github')), false, 'no path to a remote');
+});
+
+test('a worker is told plainly that committing is not its job', () => {
+  assert.match(WORKER_BRIEF, /Do not run git commit/);
+  assert.match(WORKER_BRIEF, /BotWatch snapshots your working tree/);
+  assert.match(WORKER_BRIEF, /git status and git diff are fine/);
+});
+
+test('a finished turn is snapshotted once, and a later turn again', async () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  const calls = [];
+  run.commitWorktree = async (branch) => { calls.push(branch); return { committed: true }; };
+  const worker = { branch: 'bw/x', doneAt: 100 };
+
+  await run.snapshot(worker);
+  await run.snapshot(worker);
+  assert.deepEqual(calls, ['bw/x'], 'one snapshot per finished turn');
+
+  worker.doneAt = 200; // the orchestrator messaged it and it worked again
+  await run.snapshot(worker);
+  assert.deepEqual(calls, ['bw/x', 'bw/x'], 'the follow-up turn gets its own');
+});
+
+test('merge only merges; it does not quietly commit anything', async () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  run.userApprovedMerge = true;
+  let committed = false;
+  run.commitWorktree = async () => { committed = true; return { committed: true }; };
+  await run.merge(['bw/nope']).catch(() => {});
+  assert.equal(committed, false);
+});
+
+test('a snapshot commit reads like a commit, not like a prompt', () => {
+  const long = { id: 'w1', task: 'Append the line "line two" to doc.txt. Then run git status and report the exact output.' };
+  const msg = snapshotMessage(long);
+  assert.match(msg, /^botwatch\(w1\): /);
+  assert.equal(msg.includes('\n'), false);
+  assert.ok(msg.length <= 80, `subject should stay short, was ${msg.length}`);
+  assert.equal(msg.includes('Then run git status'), false, 'only the first sentence');
 });

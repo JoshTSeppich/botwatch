@@ -40,6 +40,42 @@ I don't read `~/.claude/stats-cache.json`. It looks like the right source — it
 totals — but on my machine it was five months stale, so it reported zero for today. The
 transcripts are the live truth.
 
+## Deviation: workers don't commit, BotWatch snapshots for them
+
+The handoff's v3 model has worker branches accumulating the worker's own commits. They don't.
+A worker edits files in its worktree; pilld commits that worktree to the branch the moment the
+worker finishes a turn, from outside the sandbox. A follow-up message produces a follow-up turn
+and its own snapshot. Merge only merges.
+
+**Why.** Every spawned session runs inside Claude Code's Bash sandbox, which confines writes to
+the session's own directory. A linked worktree's index and refs live in the *main* repo's `.git`,
+which is outside that. The documentation says the sandbox handles this automatically —
+
+> **Git worktrees**: when the working directory is a linked git worktree, the sandbox also allows
+> writes to the main repository's shared `.git` directory so commands such as `git commit` can
+> update refs and the index. Writes to `hooks/` and `config` inside that directory remain denied.
+
+— and on Claude Code **2.1.280**, with worktrees placed beside the repo rather than inside it,
+that allowance did not apply. Four runs against the real CLI, all failing identically on
+`fatal: Unable to create '<repo>/.git/worktrees/<name>/index.lock'`: with an explicit
+`sandbox.filesystem.allowWrite` for the git dir, with `--add-dir`, with both, and with neither.
+
+**Why not the alternatives.**
+
+| Option | Why not |
+| --- | --- |
+| `sandbox.excludedCommands: ["git"]` | Not a carve-out, an escape. Git runs arbitrary programs through aliases (`git -c alias.x='!sh -c …' x`), `core.sshCommand`, `core.pager`, and diff and merge drivers. Excluding git hands the worker an unsandboxed shell one step later. |
+| Worktrees inside the repo | Puts worker directories where your file watchers, `tsc`, test runners and editor all see them — and it rests on the same automatic allowance that just didn't behave as documented. Trading a verified boundary for a guess. |
+
+**What it costs.** Granular worker history: one snapshot per turn instead of the worker's own
+commit sequence. Nothing in the brief's review flow needs that — per-branch +/−, the test result,
+Review in terminal and Merge all work off the diff. One commit per turn is arguably tidier on main.
+
+**What it required.** Workers are told in their brief that they cannot commit and that BotWatch
+does it for them. Without that they spend tokens fighting `index.lock`, and a determined one goes
+looking for a way around the sandbox. `git status` and `git diff` still work read-only inside the
+sandbox, verified, and are how a worker checks its own work.
+
 ## The spec disagrees with itself in one place
 
 It says the 440px pill leaves "about 289px" for prose, but its own header markup — handle, badge,
