@@ -12,6 +12,7 @@ import { readEvent, workerArgs, WORKER_BRIEF } from '../electron/orchestrator/wo
 import { Run, snapshotMessage } from '../electron/orchestrator/run.js';
 import { guardedEnv } from '../electron/orchestrator/refguard.js';
 import { guardSettings } from '../electron/orchestrator/settings.js';
+import { suspectByContent, suspectByName } from '../electron/orchestrator/review.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -318,4 +319,45 @@ test('a snapshot commit reads like a commit, not like a prompt', () => {
   assert.equal(msg.includes('\n'), false);
   assert.ok(msg.length <= 80, `subject should stay short, was ${msg.length}`);
   assert.equal(msg.includes('Then run git status'), false, 'only the first sentence');
+});
+
+test('files nobody should be merging are recognised by name', () => {
+  for (const [file, reason] of [
+    ['.env', 'environment file'],
+    ['config/.env.local', 'environment file'],
+    ['deploy/id_rsa', 'private key'],
+    ['certs/server.pem', 'key material'],
+    ['node_modules/left-pad/index.js', 'dependency directory'],
+    ['dist/bundle.js', 'build output'],
+    ['.DS_Store', 'macOS noise'],
+  ]) {
+    assert.equal(suspectByName(file), reason, file);
+  }
+});
+
+test('ordinary source files are not flagged', () => {
+  for (const file of ['src/app.js', 'README.md', 'tests/rules.test.js', 'environment.md']) {
+    assert.equal(suspectByName(file), null, file);
+  }
+});
+
+test('a secret in a file with an innocent name is still caught', () => {
+  assert.equal(suspectByContent('aws_key = AKIAIOSFODNN7EXAMPLE'), 'AWS access key');
+  assert.equal(suspectByContent('token: ghp_abcdefghijklmnopqrstuvwxyz0123'), 'GitHub token');
+  assert.match(suspectByContent('-----BEGIN RSA PRIVATE KEY-----'), /private key/);
+  assert.equal(suspectByContent('const greeting = "hello world";'), null);
+});
+
+test('merge refuses while the review has flagged something, until it is acknowledged', async () => {
+  const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
+  run.userApprovedMerge = true;
+  run.reviewAll = async () => [{ id: 'w1', branch: 'bw/x', safe: false, flagged: [{ file: '.env', reason: 'environment file' }] }];
+  const blocked = await run.merge(['bw/x']);
+  assert.match(blocked.error, /flagged files/);
+  assert.deepEqual(blocked.flagged, [{ worker: 'w1', file: '.env', reason: 'environment file' }]);
+
+  run.acknowledgedFlags = true;
+  run.commitWorktree = async () => ({ committed: false });
+  const after = await run.merge(['bw/x']);
+  assert.equal(after.error?.includes('flagged files'), undefined || false);
 });

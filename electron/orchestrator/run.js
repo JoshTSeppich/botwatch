@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import * as refguard from './refguard.js';
+import { review } from './review.js';
 import { guardSettings } from './settings.js';
 import * as worktrees from './worktrees.js';
 import { Worker } from './worker.js';
@@ -91,8 +92,29 @@ export class Run extends EventEmitter {
     const { stdout } = await execFile('git', ['-C', worker.cwd, 'status', '--porcelain']);
     if (!stdout.trim()) return { committed: false, reason: 'nothing to commit' };
     await execFile('git', ['-C', worker.cwd, 'add', '-A']);
-    await execFile('git', ['-C', worker.cwd, 'commit', '-m', snapshotMessage(worker)]);
+    // Author is the worker, committer is the user. pilld does the committing,
+    // but it did not write the code, and `git blame` should not say it did.
+    await execFile('git', [
+      '-C',
+      worker.cwd,
+      'commit',
+      '--author',
+      `BotWatch (${worker.id ?? 'worker'}) <botwatch@localhost>`,
+      '-m',
+      snapshotMessage(worker),
+    ]);
     return { committed: true };
+  }
+
+  // What Merge is about to bring in, per worker. The UI shows this; merge()
+  // also refuses on it, so the gate is not only a disabled button.
+  async reviewAll() {
+    const out = [];
+    for (const worker of this.workers) {
+      if (!worker.cwd) continue;
+      out.push({ id: worker.id, branch: worker.branch, ...(await review(worker.cwd, worker.base ?? 'main')) });
+    }
+    return out;
   }
 
   // How the orchestrator session should be launched.
@@ -119,6 +141,15 @@ export class Run extends EventEmitter {
   async merge(order = []) {
     const verdict = policy.canMerge(this.state);
     if (!verdict.ok) return { error: verdict.reason };
+
+    const reviews = await this.reviewAll();
+    const flagged = reviews.filter((r) => !r.safe);
+    if (flagged.length && !this.acknowledgedFlags) {
+      return {
+        error: 'review flagged files that should probably not be merged',
+        flagged: flagged.flatMap((r) => r.flagged.map((f) => ({ worker: r.id, ...f }))),
+      };
+    }
 
     const branches = order.length ? order : this.workers.map((w) => w.branch);
     const merged = [];
