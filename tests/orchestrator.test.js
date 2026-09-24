@@ -244,13 +244,13 @@ test('the guarded environment marks the session and removes any push target', ()
 test('pilld refuses to merge anything that is not a worker branch', async () => {
   const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
   run.userApprovedMerge = true;
-  const out = await run.merge(['main']);
+  const out = await run.merge({ reviewed: [{ branch: 'main', sha: 'abc' }] });
   assert.match(out.error, /not a worker branch/);
 });
 
 test('pilld will not merge before the user has clicked', async () => {
   const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
-  const out = await run.merge(['bw/x']);
+  const out = await run.merge({ reviewed: [{ branch: 'bw/x', sha: 'abc' }] });
   assert.match(out.error, /click Merge/);
 });
 
@@ -310,7 +310,7 @@ test('merge only merges; it does not quietly commit anything', async () => {
   run.userApprovedMerge = true;
   let committed = false;
   run.commitWorktree = async () => { committed = true; return { committed: true }; };
-  await run.merge(['bw/nope']).catch(() => {});
+  await run.merge({ reviewed: [{ branch: 'bw/nope', sha: 'abc' }] }).catch(() => {});
   assert.equal(committed, false);
 });
 
@@ -350,18 +350,20 @@ test('a secret in a file with an innocent name is still caught', () => {
   assert.equal(suspectByContent('const greeting = "hello world";'), null);
 });
 
-test('merge refuses while the review has flagged something, until it is acknowledged', async () => {
+test('merge refuses while the review has flagged something, until that file is acknowledged', async () => {
   const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
   run.userApprovedMerge = true;
-  run.reviewAll = async () => [{ id: 'w1', branch: 'bw/x', safe: false, flagged: [{ file: '.env', reason: 'environment file' }] }];
-  const blocked = await run.merge(['bw/x']);
+  run.reviewAll = async () => [
+    { id: 'w1', branch: 'bw/x', sha: 'abc', safe: false, flagged: [{ file: '.env', reason: 'environment file' }] },
+  ];
+  const reviewed = [{ branch: 'bw/x', sha: 'abc' }];
+  const blocked = await run.merge({ reviewed });
   assert.match(blocked.error, /flagged files/);
   assert.deepEqual(blocked.flagged, [{ worker: 'w1', file: '.env', reason: 'environment file' }]);
 
-  run.acknowledgedFlags = true;
-  run.commitWorktree = async () => ({ committed: false });
-  const after = await run.merge(['bw/x']);
-  assert.equal(after.error?.includes('flagged files'), undefined || false);
+  // Acknowledging some other file does not cover this one.
+  const wrong = await run.merge({ reviewed, acknowledged: ['w2:.env', 'w1:dist/app.js'] });
+  assert.match(wrong.error, /flagged files/);
 });
 
 test('the weekly percentage always says where it came from', () => {

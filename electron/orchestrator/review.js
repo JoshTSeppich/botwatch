@@ -37,18 +37,30 @@ const SECRET_CONTENT = [
 ];
 
 export async function review(worktreePath, base = 'main') {
-  const edits = await changed(worktreePath, ['diff', '--numstat', base]);
+  // Against the base branch, not the last commit: once pilld snapshots a
+  // worker, its new files are committed, and `ls-files --others` alone would
+  // file every one of them under edits. The status letter is what says new.
+  const counts = await numstat(worktreePath, base);
+  const status = await nameStatus(worktreePath, base);
+  const edits = [];
   const added = [];
+  for (const [file, letter] of status) {
+    const entry = { file, ...(counts.get(file) ?? { added: 0, removed: 0 }) };
+    if (letter === 'A') added.push(entry);
+    else edits.push({ ...entry, deleted: letter === 'D' });
+  }
+  // Still-uncommitted new files: a worker that is mid-turn, or a review taken
+  // before the snapshot.
   const untracked = await execFile('git', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'])
     .then(({ stdout }) => stdout.trim().split('\n').filter(Boolean))
     .catch(() => []);
-
   for (const file of untracked) {
-    added.push({ file, added: await countLines(worktreePath, file), removed: 0 });
+    if (!status.has(file)) added.push({ file, added: await countLines(worktreePath, file), removed: 0 });
   }
 
   const flagged = [];
   for (const entry of [...edits, ...added]) {
+    if (entry.deleted) continue;
     const reason = await suspect(worktreePath, entry.file);
     if (reason) flagged.push({ file: entry.file, reason });
   }
@@ -56,16 +68,28 @@ export async function review(worktreePath, base = 'main') {
   return { edits, added, flagged, safe: flagged.length === 0 };
 }
 
-async function changed(worktreePath, args) {
-  const { stdout } = await execFile('git', ['-C', worktreePath, ...args]).catch(() => ({ stdout: '' }));
-  return stdout
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [a, r, file] = line.split('\t');
-      return { file, added: Number(a) || 0, removed: Number(r) || 0 };
-    });
+async function numstat(worktreePath, base) {
+  const { stdout } = await execFile('git', ['-C', worktreePath, 'diff', '--numstat', '--no-renames', base]).catch(
+    () => ({ stdout: '' }),
+  );
+  const out = new Map();
+  for (const line of stdout.trim().split('\n').filter(Boolean)) {
+    const [a, r, file] = line.split('\t');
+    out.set(file, { added: Number(a) || 0, removed: Number(r) || 0 });
+  }
+  return out;
+}
+
+async function nameStatus(worktreePath, base) {
+  const { stdout } = await execFile('git', ['-C', worktreePath, 'diff', '--name-status', '--no-renames', base]).catch(
+    () => ({ stdout: '' }),
+  );
+  const out = new Map();
+  for (const line of stdout.trim().split('\n').filter(Boolean)) {
+    const [letter, file] = line.split('\t');
+    out.set(file, letter[0]);
+  }
+  return out;
 }
 
 async function countLines(worktreePath, file) {

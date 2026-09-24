@@ -17,6 +17,7 @@ import { join } from 'node:path';
 
 import * as refguard from './refguard.js';
 import { review } from './review.js';
+import { runTests } from './testrun.js';
 import { guardSettings } from './settings.js';
 import * as worktrees from './worktrees.js';
 import { Worker } from './worker.js';
@@ -37,9 +38,18 @@ export class Run extends EventEmitter {
   // is already inside itself.
   #draining = false;
 
-  constructor({ repo, goal, model, maxWorkers = 2, budgetTokens = 1_000_000, permissionCeiling = 'default' }) {
+  constructor({
+    repo,
+    goal,
+    model,
+    maxWorkers = 2,
+    budgetTokens = 1_000_000,
+    permissionCeiling = 'default',
+    testCommand = null,
+  }) {
     super();
-    Object.assign(this, { repo, goal, model, permissionCeiling });
+    Object.assign(this, { repo, goal, model, permissionCeiling, testCommand });
+    this.merges = [];
     this.limits = { maxWorkers };
     this.ledger = budget.createLedger(budgetTokens);
     this.workers = [];
@@ -80,8 +90,26 @@ export class Run extends EventEmitter {
     const result = await this.commitWorktree(worker.branch).catch((err) => ({
       error: String(err?.message ?? err),
     }));
-    if (result?.committed) this.emit('change', this);
+    if (result?.error) return result;
+    // Provenance: which commit this is, when it was taken, and what the tests
+    // said about that exact commit. The review panel shows all of it, and
+    // merge() refuses a branch that has moved on from it.
+    worker.snapshot = { sha: await this.tip(worker.branch).catch(() => null), at: Date.now() };
+    worker.test = { command: this.testCommand, running: Boolean(this.testCommand) };
+    this.emit('change', this);
+    worker.test = await this.testWorktree(worker);
+    this.emit('change', this);
     return result;
+  }
+
+  // Separate so tests can stand in for a real test run.
+  testWorktree(worker) {
+    return runTests(worker.cwd, this.testCommand);
+  }
+
+  async tip(branch) {
+    const { stdout } = await execFile('git', ['-C', this.repo, 'rev-parse', '--verify', `refs/heads/${branch}`]);
+    return stdout.trim();
   }
 
   // Turns a worker's edits into a commit on its own branch. Runs as pilld, not
@@ -112,7 +140,16 @@ export class Run extends EventEmitter {
     const out = [];
     for (const worker of this.workers) {
       if (!worker.cwd) continue;
-      out.push({ id: worker.id, branch: worker.branch, ...(await review(worker.cwd, worker.base ?? 'main')) });
+      out.push({
+        id: worker.id,
+        task: worker.task,
+        branch: worker.branch,
+        base: worker.base ?? 'main',
+        sha: await this.tip(worker.branch).catch(() => null),
+        snapshot: worker.snapshot ?? null,
+        test: worker.test ?? null,
+        ...(await review(worker.cwd, worker.base ?? 'main')),
+      });
     }
     return out;
   }
@@ -138,30 +175,66 @@ export class Run extends EventEmitter {
   // an environment without BOTWATCH_GUARD — so the hook lets it through for the
   // same reason it lets the user's own git through. No permission has to be
   // handed to a session, which is why there is no token to forge.
-  async merge(order = []) {
+  //
+  // `reviewed` is what the user was shown: each branch and the commit it was
+  // at. What merges is that commit, and only if the branch is still there —
+  // a worker that ran another turn after the review has changed what Merge
+  // would bring in. `acknowledged` names each flagged file the user ticked,
+  // as "w1:.env"; a flag nobody ticked stops the merge.
+  async merge({ reviewed = [], acknowledged = [] } = {}) {
     const verdict = policy.canMerge(this.state);
     if (!verdict.ok) return { error: verdict.reason };
+    if (!reviewed.length) return { error: 'nothing was reviewed' };
 
-    const reviews = await this.reviewAll();
-    const flagged = reviews.filter((r) => !r.safe);
-    if (flagged.length && !this.acknowledgedFlags) {
-      return {
-        error: 'review flagged files that should probably not be merged',
-        flagged: flagged.flatMap((r) => r.flagged.map((f) => ({ worker: r.id, ...f }))),
-      };
+    for (const { branch } of reviewed) {
+      if (!branch?.startsWith('bw/')) return { error: `refusing to merge ${branch}: not a worker branch` };
     }
 
-    const branches = order.length ? order : this.workers.map((w) => w.branch);
+    const reviews = await this.reviewAll();
+    const byBranch = new Map(reviews.map((r) => [r.branch, r]));
+    const ticked = new Set(acknowledged);
+    for (const { branch, sha } of reviewed) {
+      const current = byBranch.get(branch);
+      if (!current) return { error: `${branch} is not a branch of this run` };
+      if (current.sha !== sha) return { error: `${branch} changed since you reviewed it; review it again` };
+    }
+    const unacknowledged = reviewed
+      .flatMap(({ branch }) => byBranch.get(branch).flagged.map((f) => ({ worker: byBranch.get(branch).id, ...f })))
+      .filter((f) => !ticked.has(`${f.worker}:${f.file}`));
+    if (unacknowledged.length) {
+      return { error: 'review flagged files that should probably not be merged', flagged: unacknowledged };
+    }
+
+    // The cleanup below aborts a failed merge. If the checkout was already
+    // mid-merge, that abort would throw away the user's own.
+    const midMerge = await execFile('git', ['-C', this.repo, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+      .then(() => true)
+      .catch(() => false);
+    if (midMerge) return { error: 'your checkout is in the middle of a merge; finish or abort it first' };
+
     const merged = [];
-    for (const branch of branches) {
-      if (!branch?.startsWith('bw/')) return { error: `refusing to merge ${branch}: not a worker branch` };
+    for (const { branch, sha } of reviewed) {
+      const worker = byBranch.get(branch);
       try {
-        await execFile('git', ['-C', this.repo, 'merge', '--no-ff', '-m', `botwatch: merge ${branch}`, branch]);
-        merged.push(branch);
+        await execFile('git', [
+          '-C',
+          this.repo,
+          'merge',
+          '--no-ff',
+          '-m',
+          `botwatch: merge ${branch} (${worker.id} @ ${sha.slice(0, 7)})`,
+          sha,
+        ]);
+        merged.push({ branch, sha, worker: worker.id, at: Date.now() });
       } catch (err) {
+        // A conflict leaves the user's checkout mid-merge. Put it back.
+        await execFile('git', ['-C', this.repo, 'merge', '--abort']).catch(() => {});
+        this.merges.push(...merged);
         return { error: `merge of ${branch} failed: ${String(err.message).split('\n')[0]}`, merged };
       }
     }
+    this.merges.push(...merged);
+    this.emit('change', this);
     return { merged };
   }
 
