@@ -175,6 +175,15 @@
   width: 440px;
 }
 
+/* v3's collapsed line carries a repo chip, the sentence, the task strip, the
+   model and the time. 440 cannot hold all of it. */
+.pill--status.is-xwide {
+  width: 544px;
+  /* v1 caps the list at five 52px rows. A tree is the orchestrator plus its
+     workers, and clipping the last worker hides the one that is queued. */
+  --rows-max: 460px;
+}
+
 /* Zero sessions: shrink to intrinsic width, no count, no estimate. */
 .pill--status.is-empty {
   width: auto;
@@ -684,4 +693,272 @@
   .dock {
     transition: none !important;
   }
+}
+
+/* ---- v3 orchestrator ---------------------------------------------------
+   Geometry from the roadmap's v3 band. The accent is the orchestrator's own
+   colour: a worker asking the orchestrator is accent, not amber, because it is
+   not asking you. */
+
+:root {
+  --accent: #8b93ff;
+  --accent-hover: #aeb4ff;
+  --accent-ink: #c8ccff;
+  --accent-rail: rgba(139, 147, 255, 0.35);
+  --accent-wash: rgba(139, 147, 255, 0.07);
+  --row-h-worker: 56px;
+  --seg-w: 6px;
+  --seg-h: 10px;
+  --seg-queued: rgba(255, 255, 255, 0.14);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --seg-queued: rgba(255, 255, 255, 0.14);
+  }
+}
+
+:root[data-theme='light'] {
+  --seg-queued: rgba(0, 0, 0, 0.14);
+}
+
+/* Task strip: one segment per task, up to eight. */
+.strip {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  align-items: center;
+}
+
+.strip i {
+  width: var(--seg-w);
+  height: var(--seg-h);
+  border-radius: 2px;
+  /* A token, not a second rule: a theme override on the same element out-ranks
+     `.strip i.is-done` and repaints every task as queued. */
+  background: var(--seg-queued);
+}
+
+.strip i.is-done {
+  background: var(--working);
+}
+
+.strip i.is-running {
+  background: color-mix(in srgb, var(--working) 40%, transparent);
+}
+
+.strip i.is-asking {
+  background: color-mix(in srgb, var(--waiting) 60%, transparent);
+}
+
+/* Beyond eight tasks a segment per task stops meaning anything. */
+.strip.is-summarised {
+  width: 40px;
+  height: var(--seg-h);
+  border-radius: 2px;
+  background: var(--seg-queued);
+  overflow: hidden;
+  display: block;
+}
+
+.strip.is-summarised b {
+  display: block;
+  height: 100%;
+  background: var(--working);
+}
+
+/* Status badge: colour is never the only signal. */
+.badge {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.badge.is-waiting {
+  background: color-mix(in srgb, var(--waiting) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--waiting);
+  color: var(--wait-ink-2);
+}
+
+.badge.is-errored {
+  background: color-mix(in srgb, var(--errored) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--errored);
+  color: var(--errored);
+}
+
+.badge.is-turn {
+  background: color-mix(in srgb, #58a6ff 18%, transparent);
+  box-shadow: inset 0 0 0 1px #58a6ff;
+  color: #58a6ff;
+}
+
+.badge.is-accent {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+}
+
+/* The orchestrator's own row, and the workers hanging off it. */
+.row--orchestrator {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-wash);
+  padding-left: 10px;
+}
+
+.row--worker {
+  height: var(--row-h-worker);
+  position: relative;
+  padding-left: 30px;
+}
+
+.row--worker::before {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent-rail);
+}
+
+.row--worker:last-of-type::before {
+  bottom: 50%;
+}
+
+.row--worker::after {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 50%;
+  width: 7px;
+  height: 1px;
+  background: var(--accent-rail);
+}
+
+.row--queued .row__prose,
+.row--queued .row__meta {
+  opacity: 0.45;
+}
+
+/* A worker's progress, under its meta line. */
+.progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rule);
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.progress b {
+  display: block;
+  height: 100%;
+  background: var(--working);
+}
+
+/* Budget: what has been spent, and what the run is projected to spend. */
+.budget {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 13px;
+  box-sizing: border-box;
+  border-top: 1px solid var(--rule-row);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.budget__track {
+  flex: 1;
+  min-width: 0;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--rule);
+  overflow: hidden;
+  position: relative;
+}
+
+.budget__used {
+  height: 100%;
+  background: var(--working);
+}
+
+/* Hatching, so projected reads as "not yet spent" without another colour. */
+.budget__projected {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--working) 55%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.budget.is-over .budget__figure {
+  color: var(--wait-ink-2);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 13px;
+  box-sizing: border-box;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.footer__spacer {
+  flex: 1;
+}
+
+.btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-2);
+  background: transparent;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.btn--accent {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.btn--danger {
+  color: var(--errored);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Hold to confirm: 600ms linear, left to right, release cancels. */
+.btn--danger .hold {
+  position: absolute;
+  inset: 0;
+  width: 0;
+  background: color-mix(in srgb, var(--errored) 30%, transparent);
+}
+
+.btn--danger.is-holding .hold {
+  width: 100%;
+  transition: width 600ms linear;
 }

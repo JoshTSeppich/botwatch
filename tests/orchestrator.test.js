@@ -14,6 +14,7 @@ import { guardedEnv } from '../electron/orchestrator/refguard.js';
 import { guardSettings } from '../electron/orchestrator/settings.js';
 import { suspectByContent, suspectByName } from '../electron/orchestrator/review.js';
 import { allowanceLabel, modelChip, weeklyAllowance } from '../electron/orchestrator/allowance.js';
+import { badgeTone, stripPlan } from '../src/orchestrator-view.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -389,4 +390,34 @@ test('model chips come from session data, not from the mockup', () => {
   assert.equal(modelChip('claude-opus-5'), 'opus 5');
   assert.equal(modelChip('claude-haiku-4-5-20251001'), 'haiku 4.5');
   assert.equal(modelChip(null), null);
+});
+
+test('a running worker gets a plain dot, not the question badge', () => {
+  assert.deepEqual(badgeTone('running'), { kind: 'dot', tone: 'is-working' });
+  assert.deepEqual(badgeTone('working'), { kind: 'dot', tone: 'is-working' });
+  assert.equal(badgeTone('queued').tone, 'is-idle');
+});
+
+test('a worker asking the orchestrator is accent, not amber', () => {
+  assert.deepEqual(badgeTone('asking'), { kind: 'badge', glyph: '?', tone: 'is-accent' });
+  assert.equal(badgeTone('waiting').tone, 'is-waiting', 'asking YOU stays amber');
+});
+
+test('every non-working state carries a glyph, so colour is never the only signal', () => {
+  for (const state of ['asking', 'waiting', 'errored', 'done']) {
+    assert.ok(badgeTone(state).glyph, `${state} needs a glyph`);
+  }
+});
+
+test('the task strip gives one segment per task up to eight, then a bar', () => {
+  const tasks = (n, state = 'queued') => Array.from({ length: n }, () => ({ state }));
+  assert.equal(stripPlan(tasks(8)).kind, 'segments');
+  assert.equal(stripPlan(tasks(9)).kind, 'bar');
+  const plan = stripPlan([{ state: 'done' }, { state: 'running' }, { state: 'asking' }, { state: 'blocked' }]);
+  assert.deepEqual(plan.states, ['done', 'running', 'asking', 'queued'], 'unknown states read as queued');
+});
+
+test('the summarised bar reports the share of tasks finished', () => {
+  const tasks = [...Array(6).fill({ state: 'done' }), ...Array(6).fill({ state: 'queued' })];
+  assert.equal(stripPlan(tasks).fraction, 0.5);
 });
