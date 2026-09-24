@@ -13,6 +13,7 @@ import { Run, snapshotMessage } from '../electron/orchestrator/run.js';
 import { guardedEnv } from '../electron/orchestrator/refguard.js';
 import { guardSettings } from '../electron/orchestrator/settings.js';
 import { suspectByContent, suspectByName } from '../electron/orchestrator/review.js';
+import { allowanceLabel, modelChip, weeklyAllowance } from '../electron/orchestrator/allowance.js';
 
 const state = (over = {}) => ({
   stopped: false,
@@ -360,4 +361,32 @@ test('merge refuses while the review has flagged something, until it is acknowle
   run.commitWorktree = async () => ({ committed: false });
   const after = await run.merge(['bw/x']);
   assert.equal(after.error?.includes('flagged files'), undefined || false);
+});
+
+test('the weekly percentage always says where it came from', () => {
+  const now = Date.now();
+  const measured = weeklyAllowance({ cached: { sevenDay: { utilization: 0.39 }, at: now - 600_000 }, now });
+  assert.match(allowanceLabel(2_000_000, measured, 40_000_000), /measured 10m ago$/);
+
+  const entered = weeklyAllowance({ enteredLimit: 40_000_000, spent: 10_000_000 });
+  assert.match(allowanceLabel(2_000_000, entered, 40_000_000), /from the limit you set$/);
+});
+
+test('a stale measurement says so rather than pretending to be current', () => {
+  const now = Date.now();
+  const old = weeklyAllowance({ cached: { sevenDay: { utilization: 0.39 }, at: now - 9 * 3600_000 }, now });
+  assert.equal(old.stale, true);
+  assert.match(allowanceLabel(2_000_000, old, 40_000_000), /may be out of date/);
+});
+
+test('with no measurement and no entered limit the percentage is hidden, not guessed', () => {
+  assert.equal(weeklyAllowance({}), null);
+  assert.equal(allowanceLabel(2_000_000, null, null), null);
+  assert.equal(allowanceLabel(2_000_000, weeklyAllowance({ enteredLimit: 40_000_000 }), null), null);
+});
+
+test('model chips come from session data, not from the mockup', () => {
+  assert.equal(modelChip('claude-opus-5'), 'opus 5');
+  assert.equal(modelChip('claude-haiku-4-5-20251001'), 'haiku 4.5');
+  assert.equal(modelChip(null), null);
 });
