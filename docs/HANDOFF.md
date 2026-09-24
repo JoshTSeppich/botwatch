@@ -83,14 +83,15 @@ refused, and the same ref merges cleanly when pilld does it.
 - **Separate clones** would improve ref and history safety and do nothing for file writes —
   `docs/tickets/separate-clones.md`, not built.
 
-## Open decisions
+## Decisions (settled 2026-09-24)
 
-1. **Publishing.** The repo is public and the README says it was built as a take-home; Joshua had
-   not submitted at the time of writing. Flipping it private until after submission was offered and
-   not taken up.
-2. **Global git identity** is still `josh@aetherx.io`; only this repo is set to the gmail. Snapshots
-   in other repos will carry the aetherx address.
-3. **Bundle id** `io.github.joshtseppich.botwatch` — changing it costs a permission re-grant.
+None open. Don't reopen these without a new reason.
+
+- **Wide pill is 544**, per the BotWatch README (see the deviations table).
+- **The repo stays public**, take-home note and all.
+- **The bundle id stays** `io.github.joshtseppich.botwatch`, so nobody has to grant permissions again.
+- **Global git identity is left as is** (`josh@aetherx.io`). Only this repo uses the gmail, so
+  snapshots in other repos carry the aetherx address, and that's accepted.
 
 ## What to do next, in order
 
