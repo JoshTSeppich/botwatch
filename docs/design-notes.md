@@ -76,11 +76,14 @@ does it for them. Without that they spend tokens fighting `index.lock`, and a de
 looking for a way around the sandbox. `git status` and `git diff` still work read-only inside the
 sandbox, verified, and are how a worker checks its own work.
 
-## The spec disagrees with itself in one place
+## The wide pill is 544
 
-It says the 440px pill leaves "about 289px" for prose, but its own header markup — handle, badge,
-repo chip, model, rule, estimate — leaves about 180px. I followed the markup and kept the
-46-character cap, so long copy ellipsises earlier than the spec's arithmetic predicts.
+`Status Pill.dc.html` draws the wide pill at 440 and says that leaves "about 289px" for prose;
+its own header markup — handle, badge, repo chip, model, rule, time — leaves about 180px. The
+BotWatch README says 544, and that is what ships. At 544 the same markup leaves about 284px,
+which at the spec's own 216px-per-34-characters is 45 characters, so the 46-character cap now
+fits instead of ellipsising early. 440 survives only where the spec uses it for something else:
+the prompt field and the ⌥⌘J permission line.
 
 ## Read next
 

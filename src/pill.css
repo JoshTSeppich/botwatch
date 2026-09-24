@@ -172,11 +172,11 @@
 }
 
 .pill--status.is-wide {
-  width: 440px;
+  width: 544px;
 }
 
-/* v3's collapsed line carries a repo chip, the sentence, the task strip, the
-   model and the time. 440 cannot hold all of it. */
+/* v3's collapsed line is the same width as v1's wide one, and carries a task
+   strip on top of the repo chip, sentence, model and time. */
 .pill--status.is-xwide {
   width: 544px;
   /* v1 caps the list at five 52px rows. A tree is the orchestrator plus its

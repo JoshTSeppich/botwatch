@@ -45,7 +45,7 @@ Serve with `python3 -m http.server`, drive with the Chrome DevTools MCP against
 | **Workers don't commit.** pilld snapshots each worktree to its branch when a turn ends | The Bash sandbox keeps workers out of the main repo's `.git`, which is what denies them `.git/hooks`. Four runs against the CLI failed identically on `index.lock`; the documented linked-worktree allowance did not apply on **2.1.280**. See `design-notes.md` |
 | **No merge token.** pilld performs the merge itself, outside the guard env | The token existed only because the agent did the merging. Removing it removed a forgeable file and a wildcard window |
 | **Fullscreen on raise is off** unless `PILL_FULLSCREEN=1` | The overlay can't draw over a macOS fullscreen Space, so obeying the spec made the pill vanish on the click that used it |
-| **Wide pill is 440px**, handoff says **544** | v1 was built from `Status Pill.dc.html`, which says 440. The BotWatch README says 544. **Unreconciled — decide before v1 is called done.** v3's own line uses 544 (`.is-xwide`) because it carries repo, sentence, strip, model and time |
+| **Wide pill is 544**, `Status Pill.dc.html` says **440** | Decided: the BotWatch README governs sizes. v1 and v3 now share 544; see `design-notes.md` |
 | **Model chips show real model ids** (`opus 5`), not the mockup's `opus 4.6` | The mockup's labels are a picture |
 | **"% of what's left this week" carries source and age**, or is hidden | No live weekly limit exists. See "holes" |
 | **Accent is `#4F56C9` on the white pill**, `#8B93FF` on the dark one | `#8B93FF` was drawn for a dark shell and is barely legible on white |
@@ -79,13 +79,12 @@ refused, and the same ref merges cleanly when pilld does it.
 
 ## Open decisions
 
-1. **440 vs 544** for the v1 wide pill (above).
-2. **Publishing.** The repo is public and the README says it was built as a take-home; Joshua had
+1. **Publishing.** The repo is public and the README says it was built as a take-home; Joshua had
    not submitted at the time of writing. Flipping it private until after submission was offered and
    not taken up.
-3. **Global git identity** is still `josh@aetherx.io`; only this repo is set to the gmail. Snapshots
+2. **Global git identity** is still `josh@aetherx.io`; only this repo is set to the gmail. Snapshots
    in other repos will carry the aetherx address.
-4. **Bundle id** `io.github.joshtseppich.botwatch` — changing it costs a permission re-grant.
+3. **Bundle id** `io.github.joshtseppich.botwatch` — changing it costs a permission re-grant.
 
 ## What to do next, in order
 
