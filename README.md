@@ -9,8 +9,8 @@ without you asking: how many sessions are live, what each one is doing, which on
 how much of the week's token budget is gone. Click a row and it brings that session's terminal
 window to the front.
 
-It reads what Claude Code already writes to `~/.claude`. It does not talk to the network, and it
-has no telemetry.
+It listens to Claude Code's own hooks, through a small plugin, and reads what Claude Code already
+writes to `~/.claude`. It does not talk to the network, and it has no telemetry.
 
 ## Why this exists
 
@@ -32,6 +32,25 @@ right-click BotWatch.app → Open → Open
 
 Do that once and macOS remembers.
 
+Then install the Claude Code plugin that ships inside the app. It is what tells the pill a
+session is waiting on a permission prompt or a question:
+
+```sh
+claude plugin marketplace add /Applications/BotWatch.app/Contents/Resources/claude-plugin
+claude plugin install botwatch@botwatch
+```
+
+New sessions pick it up; ones already running keep working without it until you restart them.
+Every hook runs `bw-hook`, which hands the event to the pill over a local socket and exits. If
+BotWatch isn't running it exits 0 without a word — measured at under 7ms on Apple silicon, and
+under 50ms in every case I could construct — so the plugin never slows Claude Code down. The one
+exception is the very first run after installing: macOS spends about 0.3s checking a binary it
+hasn't seen before, once. Without the plugin the pill
+still works, from transcripts alone, with the limits listed under "What it can't tell you".
+
+To update after installing a new BotWatch: `claude plugin marketplace update botwatch`, then
+`claude plugin update botwatch@botwatch`. To remove it: `claude plugin uninstall botwatch@botwatch`.
+
 **It has no Dock icon.** It's an accessory app: the pill is the interface. There's a small pill
 glyph in the menu bar for the one thing the pill can't do — quitting. Right-clicking the pill
 gives you the same menu.
@@ -43,7 +62,8 @@ git clone https://github.com/JoshTSeppich/botwatch
 cd botwatch
 npm install
 npm start          # run it
-npm run dist       # build the .dmg into dist/
+npm run dist       # build the .dmg into dist/ (builds bw-hook first; needs Rust with the
+                   # aarch64-apple-darwin and x86_64-apple-darwin targets)
 ```
 
 ## Permissions
@@ -58,7 +78,8 @@ Clicking the pill triggers the system prompts. If you already said no once, macO
 again, so clicking it opens the right pane of System Settings instead. The pill notices the
 moment you grant access — no relaunch.
 
-That's all it asks for. No network, no disk access beyond `~/.claude`, no login.
+That's all it asks for. No network, no disk access beyond `~/.claude`, no login. The hook socket
+is `~/.claude/botwatch/pilld.sock`, readable and writable by you alone.
 
 ## What you're looking at
 
@@ -66,7 +87,8 @@ That's all it asks for. No network, no disk access beyond `~/.claude`, no login.
 ⠿ ● 3  api-gateway  Refactoring auth, running tests   opus 5 │ ~4m
 ```
 
-- **Dot** — red if any session stopped, amber if one is waiting on you, green if any is working,
+- **Dot** — red if any session stopped, amber if one is waiting on you (a permission prompt, a
+  question, or a finished turn), green if any is working,
   grey if nothing is running. Worst state wins, because the bad one is the one you need to see.
 - **Count** — live sessions.
 - **Repo chip** — the git root. Reads `3 repos` when they span more than one.
@@ -74,7 +96,8 @@ That's all it asks for. No network, no disk access beyond `~/.claude`, no login.
 - **Time** — elapsed on the longest-running session, or `now` when something is waiting on you.
 
 Hover and it expands into a row per session: state, what it's doing, repo, model, time, and an
-`×` to hide a session you don't care about. Hiding it doesn't touch the process. Click a row to
+`×` to hide a session you don't care about. A session waiting on you says which kind of waiting:
+`Needs permission to run npm test`, or `Asks: Which database should I use?`. Hiding it doesn't touch the process. Click a row to
 raise that terminal. Drag the four-dot handle to move the pill; double-click the handle to put it
 back.
 
@@ -157,10 +180,18 @@ I'd rather say this up front than have you find it.
 - **There is no time estimate.** Nothing in a session reports how much work is left, so the pill
   shows elapsed time, without a tilde. If you see `~4m` it came from something that actually
   reported an estimate. Everything else is time spent, not time left.
-- **"Waiting on you" only catches a finished turn.** A session sitting on a permission prompt
-  looks identical to one running a long test suite — both are an open tool call with no result.
-  So the amber state catches "it asked you a question and stopped", but not "it wants you to
-  approve a command", which is the more annoying of the two.
+- **Without the plugin, "waiting on you" only catches a finished turn.** A session started
+  before you installed it, or on a machine without it, is read from its transcript, where a
+  permission prompt looks identical to a long test run — both are an open tool call with no
+  result. With the plugin, a permission prompt and a question each turn the pill amber the moment
+  they appear, and say which one they are.
+- **Nothing reports the moment you answer a prompt.** No hook fires on approve or deny; the next
+  one is when the tool finishes. So the pill clears the amber from Claude Code's own session
+  file, which flips to busy about 70ms after you answer, and it notices on its next one-second
+  poll. If a future Claude Code stops writing that field, an approved slow command stays amber
+  until it finishes.
+- **A session that's killed says nothing.** No hook fires on `kill -9` or a crash, so a row
+  leaves when its process is gone, found on the same one-second poll.
 - **The summary is blunt.** It says `running npm test` or `editing render.js`, because the tool
   in flight is what's actually knowable. It is not going to write you a nice sentence.
 - **Tab targeting only works on scriptable terminals.** Terminal.app and iTerm2 expose a tty per
@@ -174,7 +205,23 @@ I'd rather say this up front than have you find it.
 
 ## How it decides
 
+With the plugin, from hooks:
+
 | It shows | Because |
+| --- | --- |
+| working | you sent a prompt, a tool started or finished, or you answered a prompt |
+| needs permission | `PermissionRequest`, or the `permission_prompt` Notification six seconds later |
+| asks you a question | the session called `AskUserQuestion` — which also raises a permission-shaped Notification, and is still shown as a question |
+| waiting on you | `Stop`: the turn ended, so it's your move |
+| stopped | a turn open for ten minutes whose last tool failed |
+| stuck | a turn open for ten minutes with nothing happening |
+
+Which sessions exist comes from `~/.claude/sessions/`, checked against their pids every second,
+so a session started before BotWatch shows up the moment it launches. Until a session's first
+hook arrives, its state is read from its transcript, by the rules below; after that the
+transcript only supplies the model and the token counts.
+
+| From the transcript | Because |
 | --- | --- |
 | working | the newest turn is still open — a tool is running |
 | waiting on you | the turn ended, so it's your move |
@@ -187,9 +234,14 @@ every turn — counting those reports a billion tokens for a session that spent 
 ## Building on it
 
 Everything the pill shows comes from one function, `read()` in `electron/sessions.live.js`. Swap
-it and the pill will show whatever you want. `PILL_MOCK=1 npm start` runs it on a fixture
+it and the pill will show whatever you want. Hook events arrive in `electron/pilld.js` and are
+folded into session state by `electron/registry.js`, which is pure and tested transition by
+transition. `PILL_TRACE=1 npm start` logs every hook event, the state it produced, and each row
+arriving and leaving. `PILL_MOCK=1 npm start` runs it on a fixture
 instead, which is also what `npm run demo` serves at `/demo.html` for poking at the states
 without waiting for real ones.
 
 `npm test` runs the rules — truncation, which colour wins, what the time slot says when nothing
-is known.
+is known — and every hook transition. With `bw-hook` built (`npm run hook`) it also sends events
+through the real binary and a real socket, and checks that it exits 0 inside 50ms with nothing
+listening.

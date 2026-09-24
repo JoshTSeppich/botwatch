@@ -8,8 +8,8 @@ measured against the real CLI; where something is unverified it says so.
 | Piece | State |
 | --- | --- |
 | v1 pill (collapsed, expanded, usage, tray, drag, raise, permissions, packaging) | **shipped**, released `v0.1.0` |
-| v1 data source | reads `~/.claude` transcripts. **The hook pipeline is not wired** |
-| `bw-hook` (Rust, 50ms fire-and-forget) | **builds, unused** — nothing listens on the socket |
+| v1 data source | **hooks** — plugin → `bw-hook` → `~/.claude/botwatch/pilld.sock` → `electron/registry.js`. Transcripts supply model and tokens, and state only until a session's first hook |
+| `bw-hook` (Rust, fire-and-forget) | **shipped in the app** as one universal binary inside `Contents/Resources/claude-plugin`; release workflow builds and verifies both slices |
 | v3 orchestrator core (policy, budget, worktrees, worker, run, MCP, refguard, review, allowance) | **built and exercised against the real CLI** |
 | v3 UI | **collapsed line + expanded tree only** |
 | v2 (reply and approve) | **not started** |
@@ -66,6 +66,12 @@ refused, and the same ref merges cleanly when pilld does it.
 
 ## The holes
 
+- **The approval signal is an undocumented field.** If Claude Code stops writing `status` to
+  `~/.claude/sessions/<pid>.json`, an approved slow command stays amber until `PostToolUse`.
+- **Interrupting with Esc fires no hook.** A session interrupted mid-tool stays `working` until
+  its next event, or goes `stuck` after ten minutes. Not measured whether `status` goes `idle`
+  there; if it does, `registry.answered` is where to use it.
+
 - A session with a shell can **delete the ref hook** or run `BOTWATCH_GUARD= git merge`. The sandbox
   narrows this (it can't reach the checkout's `.git`) but the env check is a marker, not a lock.
 - `git reset --hard` overwrites a working tree **before** touching any ref — confined to the
@@ -92,10 +98,19 @@ refused, and the same ref merges cleanly when pilld does it.
    six-row tree matches the reference rather than raising the cap for convenience. *(Done as of this
    commit: accent and queued-segment tokens flipped, indent corrected to 14px, reference confirmed
    to show six rows with no overflow.)*
-2. **Finish M1**: `bw-hook` → unix socket → pilld registry, with the **Notification hook** driving
-   "needs you". Until then the pill infers state from transcript shape and cannot tell a question
-   from a permission prompt. Demonstrate a real permission prompt turning the pill amber, and fix
-   the README's "What it can't tell you" if it goes stale.
+2. **Finish M1.** *(Done.)* Measured on 2.1.281, which the unit tests now pin:
+   - `PermissionRequest` fires ~30ms after `PreToolUse`; the `permission_prompt` Notification
+     trails it by **6.0s**. Both are registered; either turns the pill amber.
+   - `AskUserQuestion` raises `PreToolUse`, then `PermissionRequest` **and** a `permission_prompt`
+     Notification. The registry keeps it a question because `PreToolUse` named it first.
+   - **No hook fires when a prompt is answered.** The next event is `PostToolUse` when the tool
+     ends. The approval signal is the session file's `status` going `waiting → busy` (~70ms after
+     the keypress), accepted only when written after the prompt went up (`registry.answered`).
+   - `Stop` **does** carry `last_assistant_message`, despite the docs.
+   - bw-hook's write timeout was per `write` call; a hung pilld plus a 200KB `Write` payload took
+     115ms. It now has one 25ms delivery deadline. Worst case measured: 33.7ms native, 48.2ms for
+     the x86_64 slice under Rosetta (no Intel Mac to measure natively). First exec of a newly
+     installed binary costs ~270ms (native) / ~450ms (Rosetta) in the OS, before `main`.
 3. **The loop end to end through the UI**: setup panel (`⌥⌘O`), merge review panel (edits and new
    files separately, flags, an acknowledge step, per-worker provenance: id, branch, snapshot SHA,
    test command and result, timestamp). Prove it on a scratch repo with a worker that leaves a
