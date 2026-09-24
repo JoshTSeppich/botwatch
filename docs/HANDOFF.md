@@ -55,6 +55,38 @@ Serve with `python3 -m http.server`, drive with the Chrome DevTools MCP against
 | **"% of what's left this week" carries source and age**, or is hidden | No live weekly limit exists. See "holes" |
 | **Accent is `#4F56C9` on the white pill**, `#8B93FF` on the dark one | `#8B93FF` was drawn for a dark shell and is barely legible on white |
 
+## Fullscreen: what works where
+
+The pill drawing over native fullscreen was measured failing in the first session and working on
+2026-09-24. The history does not say how the first test was run: the window setup and the claim
+arrived together in the first overlay commit. So this is the table to trust, and the cells marked
+unmeasured are the ones to test before changing anything.
+
+| Overlay | Over | Result, macOS 26.3.1, Electron 44 |
+| --- | --- | --- |
+| packaged app | Terminal.app, native fullscreen, entering and leaving | **works** — screenshots |
+| packaged app | iTerm2 3.7.3, native fullscreen, via the raise's own `fullscreenFront()` | **works** — screenshots |
+| packaged app | Terminal.app, via `fullscreenFront()` | **works** — screenshots |
+| dev build (`npx electron .`) | Terminal.app, native fullscreen | **works** — screenshot, only `Electron` running |
+| either | Claude desktop app, native fullscreen | **unmeasured** — see below |
+
+So "dev build vs packaged" is not the difference, at least over terminals. Suspects for the first
+failure, in order: the Claude desktop app (the first test's host, and an Electron app itself), a
+macOS update since, or the pill simply not re-docking because the tracker ignores a non-terminal
+front window.
+
+Why the Claude desktop cell is empty: its window was already fullscreen on its own Space, and
+neither `activate` nor `open -a` switched to that Space from a script; Control-arrow Space
+switching landed on other apps' Spaces. Testing it needs someone at the keyboard to swipe to it.
+
+Two traps, both of which cost time here:
+
+- **The window server's on-screen flag lies across fullscreen Spaces.** `CGWindowListCopyWindowInfo`
+  with `optionOnScreenOnly` reported Claude's fullscreen window on screen while Terminal was
+  showing. Only a screenshot settles whether the pill is visible.
+- **`front window` of a fullscreen app is often a 33pt bar** (subrole `AXUnknown`) and reads
+  `AXFullScreen = false`. Ask for the first `AXStandardWindow`.
+
 ## Security model, in one paragraph
 
 Every session BotWatch spawns gets, via `--settings`: Claude Code's Bash **sandbox** (`enabled`,

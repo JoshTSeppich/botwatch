@@ -6,13 +6,14 @@ which one died. Checking meant cycling through terminal windows.
 
 Run agents in parallel. Review every change. Merge deliberately.
 
-So this is a small always-on-top pill that docks to the top edge of your terminal and tells you,
+This is a small always-on-top pill that docks to the top edge of your terminal and tells you,
 without you asking: how many sessions are live, what each one is doing, which one needs you, and
 how much of the week's token budget is gone. Click a row and it brings that session's terminal
 window to the front.
 
 It listens to Claude Code's own hooks, through a small plugin, and reads what Claude Code already
-writes to `~/.claude`. It does not talk to the network, and it has no telemetry.
+writes to `~/.claude`. BotWatch itself sends nothing anywhere and has no telemetry. The sessions it
+starts when you orchestrate talk to Anthropic's API like any Claude Code session.
 
 ## Why this exists
 
