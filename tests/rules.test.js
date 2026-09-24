@@ -128,3 +128,9 @@ test('usage bar turns amber at 75 and red at 90', () => {
   assert.equal(usageTone(75), 'waiting');
   assert.equal(usageTone(90), 'errored');
 });
+
+test('raising a session puts its terminal in fullscreen by default, as the spec says', async () => {
+  const { FULLSCREEN } = await import('../electron/raise.js');
+  assert.equal(FULLSCREEN, process.env.PILL_FULLSCREEN !== '0');
+  if (process.env.PILL_FULLSCREEN === undefined) assert.equal(FULLSCREEN, true);
+});

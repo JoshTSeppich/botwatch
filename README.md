@@ -214,10 +214,11 @@ I'd rather say this up front than have you find it.
   tab, so a click lands on the exact window or tab. WezTerm and kitty go through their CLIs.
   Ghostty, Warp and the Claude desktop app have no equivalent, so you get the app raised and
   nothing finer.
-- **Fullscreen is measured for one terminal, on one macOS.** On macOS 26.3.1 the pill draws over
-  a native-fullscreen Terminal.app window, and stays there as the window goes into and out of
-  fullscreen. I have not measured iTerm2, Ghostty or the others in fullscreen, or older macOS,
-  where an earlier version of this README said the pill ended up behind.
+- **Fullscreen is measured for two terminals, on one macOS.** Clicking a row raises that terminal
+  and puts it in native fullscreen, as the spec asks; `PILL_FULLSCREEN=0` turns that off. On macOS
+  26.3.1 the pill stays on top of a native-fullscreen Terminal.app or iTerm2 window, including
+  through the raise itself. I have not measured Ghostty, WezTerm, kitty or Warp in fullscreen, or
+  older macOS, where an earlier version of this README said the pill ended up behind.
 - **macOS only, really.** The Windows and X11 raise paths are written but I have not run them.
   Wayland has no way for an app to raise itself, so that one is missing rather than faked.
 

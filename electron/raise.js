@@ -13,11 +13,11 @@ import { targetFor } from './sessions.js';
 
 const run = promisify(execFile);
 
-// The spec says raise and fullscreen. Fullscreen is opt-in because the pill
-// once vanished over a fullscreen Space. On macOS 26.3.1 it no longer does for
-// Terminal.app (docs/HANDOFF.md has the measurement); the default is a decision
-// that hasn't been made again yet.
-const FULLSCREEN = process.env.PILL_FULLSCREEN === '1';
+// The spec says raise and fullscreen, and that is the default. It was opt-in
+// while the pill vanished over a fullscreen Space; on macOS 26.3.1 it stays on
+// top of both Terminal.app and iTerm2 in native fullscreen (docs/HANDOFF.md has
+// the measurements). PILL_FULLSCREEN=0 turns it off.
+export const FULLSCREEN = process.env.PILL_FULLSCREEN !== '0';
 
 export async function raise(sessionId) {
   const target = targetFor(sessionId);
@@ -127,16 +127,22 @@ end tell`);
 
 // Accessibility permission is required for this; activation alone still works
 // without it, so a refusal here is not a failure.
-async function fullscreenFront(pid) {
-  await applescript(`
+//
+// The first standard window, not "front window": while an app is fullscreen
+// macOS adds 33pt bar windows (subrole AXUnknown) ahead of the real one, and
+// setting the attribute on those does nothing.
+export async function fullscreenFront(pid) {
+  return applescript(`
 tell application "System Events"
   set procs to (every application process whose unix id is ${pid})
   if procs is {} then error "stale"
-  try
-    set value of attribute "AXFullScreen" of front window of item 1 of procs to true
-  end try
+  set wins to (every window of item 1 of procs whose value of attribute "AXSubrole" is "AXStandardWindow")
+  if wins is {} then return false
+  set value of attribute "AXFullScreen" of item 1 of wins to true
   return true
-end tell`).catch(() => false);
+end tell`)
+    .then((out) => String(out).trim() === 'true')
+    .catch(() => false);
 }
 
 async function raiseWindows(pid) {
