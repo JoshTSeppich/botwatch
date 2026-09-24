@@ -195,3 +195,12 @@ test('a worker gets the mode chosen in setup unless the orchestrator asks for le
   assert.deepEqual(run.workers.map((w) => w.permissionMode), ['acceptEdits', 'plan', 'acceptEdits']);
   clearInterval(run.reaper);
 });
+
+test('setup starts on acceptEdits even for a bypass user, and never offers above their own mode', async () => {
+  const { permissionChoices } = await import('../electron/orchestrator/setup.js');
+  assert.deepEqual(permissionChoices('bypassPermissions'), {
+    offered: ['plan', 'default', 'acceptEdits', 'bypassPermissions'],
+    start: 'acceptEdits',
+  });
+  assert.deepEqual(permissionChoices('default'), { offered: ['plan', 'default'], start: 'default' });
+});

@@ -121,3 +121,22 @@ test('scripts outside the asar are addressed where the packaged app unpacks them
   const here = new URL('../electron/orchestrator/guard.mjs', import.meta.url);
   assert.equal(scriptShellCommand(here), `${JSON.stringify(process.execPath)} ${JSON.stringify(fileURLToPath(here))}`);
 });
+
+test('the relay exits when BotWatch goes away, instead of outliving it', async () => {
+  const path = sock();
+  const server = await serveControl(() => null, path);
+  const connections = [];
+  server.on('connection', (socket) => connections.push(socket));
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../electron/orchestrator/mcp.js', import.meta.url))], {
+    env: { ...process.env, BOTWATCH_CONTROL_SOCK: path, BOTWATCH_RUN_TOKEN: 'tok' },
+  });
+  const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  for (let i = 0; i < 50 && !connections.length; i += 1) await new Promise((r) => setTimeout(r, 20));
+  // What quitting BotWatch does to the relay's connection.
+  server.close();
+  for (const socket of connections) socket.destroy();
+  const timeout = new Promise((resolve) => setTimeout(() => resolve('still running'), 3000));
+  const outcome = await Promise.race([exited, timeout]);
+  if (outcome === 'still running') child.kill();
+  assert.equal(outcome, 0);
+});

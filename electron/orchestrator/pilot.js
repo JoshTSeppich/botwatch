@@ -135,12 +135,20 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     onChange();
   }
 
-  // Ends the run: processes released, the ref hook taken back out. Branches
-  // and worktrees stay, so nothing a worker did is lost by closing.
-  async function close() {
+  // Ends the run and takes the ref hook back out. Branches and worktrees
+  // stay, so nothing a worker did is lost by closing.
+  //
+  // `stop` is for quitting. Releasing only closes stdin, which lets a session
+  // exit after its turn — and an orchestrator waiting on workers that will
+  // never report back has no end to its turn. Measured: quitting mid-run left
+  // it and its relay orphaned. So a quit stops every process outright.
+  async function close({ stop: kill = false } = {}) {
     if (!live) return;
     live.closed = true;
-    live.orchestrator.release();
+    if (kill) {
+      live.run.stop();
+      live.orchestrator.stop();
+    } else live.orchestrator.release();
     await live.run.close();
     onChange();
   }

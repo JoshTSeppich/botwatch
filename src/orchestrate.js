@@ -134,9 +134,9 @@ export function createOrchestrate({ dock, host, statusEl }) {
     const budget = chips('budget', BUDGET_CHOICES, 1_000_000, abbrevTokens);
     form.append(field('Token budget', budget.el));
 
-    // Never wider than the user's own: modes past the ceiling aren't offered.
-    const allowed = info.permissions.slice(0, info.permissions.indexOf(info.ceiling) + 1);
-    const permission = chips('permission', allowed, allowed.includes('acceptEdits') ? 'acceptEdits' : info.ceiling);
+    // Never wider than the user's own, and starting on acceptEdits: pilld
+    // decides both (setup.js permissionChoices).
+    const permission = chips('permission', info.offered, info.start);
     form.append(field('Workers may', permission.el, `Your own sessions run as ${info.ceiling}; workers get no more.`));
 
     const testInput = el('input', 'setup__test');

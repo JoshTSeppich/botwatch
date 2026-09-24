@@ -14,7 +14,12 @@ import { createInterface } from 'node:readline';
 import { CONTROL_PATH, controlClient } from './control.js';
 import { TOOLS } from './tools.js';
 
-const client = controlClient(process.env.BOTWATCH_CONTROL_SOCK || CONTROL_PATH, process.env.BOTWATCH_RUN_TOKEN ?? '');
+// With BotWatch gone the run is gone, and a relay with nothing to relay to
+// must not outlive it. Nor must it outlive the session that started it.
+// The short delay lets the error for a call already in flight go out first.
+const client = controlClient(process.env.BOTWATCH_CONTROL_SOCK || CONTROL_PATH, process.env.BOTWATCH_RUN_TOKEN ?? '', () =>
+  setTimeout(() => process.exit(0), 200),
+);
 
 function schema(params) {
   const properties = {};
@@ -26,7 +31,7 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
-createInterface({ input: process.stdin }).on('line', async (line) => {
+createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on('line', async (line) => {
   if (!line.trim()) return;
   let request;
   try {

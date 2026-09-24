@@ -28,6 +28,15 @@ export async function recentRepos(sessions) {
   return roots.slice(0, 5);
 }
 
+// What the panel offers, and what it starts on. Never wider than your own
+// mode; and starting on acceptEdits even when you run bypass yourself, so
+// anything wider is a choice you make, not one the panel made for you.
+export function permissionChoices(ceiling) {
+  const offered = PERMISSIONS.slice(0, PERMISSIONS.indexOf(ceiling) + 1);
+  const start = offered.includes('acceptEdits') ? 'acceptEdits' : offered[offered.length - 1];
+  return { offered, start };
+}
+
 // "Never wider than the user's own": the mode your own sessions start in.
 export async function userCeiling() {
   const settings = await readFile(join(homedir(), '.claude', 'settings.json'), 'utf8')
@@ -40,12 +49,13 @@ export async function userCeiling() {
 export async function setupInfo(repo, sessions) {
   const repos = await recentRepos(sessions);
   const chosen = repo || repos[0] || null;
+  const ceiling = await userCeiling();
   return {
     repos,
     repo: chosen,
     models: MODELS,
-    ceiling: await userCeiling(),
-    permissions: PERMISSIONS,
+    ceiling,
+    ...permissionChoices(ceiling),
     testCommand: chosen ? await detectTestCommand(chosen) : null,
   };
 }

@@ -271,12 +271,12 @@ function pillMenu() {
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => globalShortcut.unregisterAll());
 
-// Quitting mid-run releases the workers and takes the ref hook back out of the
-// repo, once; the branches and worktrees stay.
+// Quitting mid-run stops the orchestrator and every worker and takes the ref
+// hook back out of the repo, once; the branches and worktrees stay.
 let closing = false;
 app.on('before-quit', (event) => {
   if (closing || !pilot.current()) return;
   closing = true;
   event.preventDefault();
-  void pilot.close().finally(() => app.quit());
+  void pilot.close({ stop: true }).finally(() => app.quit());
 });

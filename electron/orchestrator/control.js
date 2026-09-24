@@ -94,7 +94,7 @@ async function clearStale(path) {
 
 // The client half, for mcp.js. One connection, requests multiplexed by id,
 // because wait_for can be outstanding for minutes while other calls go by.
-export function controlClient(path, token) {
+export function controlClient(path, token, onClose = null) {
   const socket = connect(path);
   const waiting = new Map();
   let nextId = 1;
@@ -123,7 +123,10 @@ export function controlClient(path, token) {
     waiting.clear();
   };
   socket.on('error', () => fail('BotWatch is not running, so the run it held is gone'));
-  socket.on('close', () => fail('BotWatch closed the connection'));
+  socket.on('close', () => {
+    fail('BotWatch closed the connection');
+    onClose?.();
+  });
 
   return {
     call(tool, args) {
