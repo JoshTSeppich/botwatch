@@ -77,9 +77,20 @@ test('a merge needs the user to have clicked, not the model to have asked', () =
   assert.equal(policy.canMerge(state({ userApprovedMerge: true })).ok, true);
 });
 
-test('a merge waits for the workers to finish', () => {
-  const s = state({ userApprovedMerge: true, workers: [{ state: 'running' }] });
-  assert.equal(policy.canMerge(s).ok, false);
+test('a branch merges only once its worker is finished, snapshotted, tested and unchanged', () => {
+  const done = { id: 'w1', branch: 'bw/a', state: 'done', snapshot: { sha: 'abc' }, test: { passed: true } };
+  const at = { reviewedSha: 'abc', tipSha: 'abc' };
+  assert.equal(policy.canMergeBranch(done, at).ok, true);
+  assert.match(policy.canMergeBranch({ ...done, state: 'running' }, at).reason, /has not finished/);
+  assert.match(policy.canMergeBranch({ ...done, snapshot: null }, at).reason, /no snapshot/);
+  assert.match(policy.canMergeBranch({ ...done, test: { running: true } }, at).reason, /tests are still running/);
+  assert.match(policy.canMergeBranch(done, { reviewedSha: 'abc', tipSha: 'def' }).reason, /changed since you reviewed/);
+  assert.match(policy.canMergeBranch(done, { ...at, merged: true }).reason, /already merged/);
+});
+
+test('other workers still running do not block a finished one', () => {
+  const s = state({ userApprovedMerge: true, workers: [{ state: 'running' }, { state: 'queued' }] });
+  assert.equal(policy.canMerge(s).ok, true);
 });
 
 test('the ledger reports exhaustion only once the limit is actually reached', () => {
@@ -353,6 +364,7 @@ test('a secret in a file with an innocent name is still caught', () => {
 test('merge refuses while the review has flagged something, until that file is acknowledged', async () => {
   const run = new Run({ repo: '/tmp', goal: 'x', model: 'haiku' });
   run.userApprovedMerge = true;
+  run.workers.push({ id: 'w1', branch: 'bw/x', state: 'done', snapshot: { sha: 'abc' } });
   run.reviewAll = async () => [
     { id: 'w1', branch: 'bw/x', sha: 'abc', safe: false, flagged: [{ file: '.env', reason: 'environment file' }] },
   ];

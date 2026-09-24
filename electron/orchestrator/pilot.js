@@ -178,6 +178,9 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     test: w.test ?? null,
   }));
   const done = workers.filter((w) => TERMINAL.has(w.state)).length;
+  // One finished, snapshotted, tested worker is enough to open the review:
+  // merging is per branch.
+  const reviewable = workers.some((w) => w.state === 'done' && w.snapshot && !w.test?.running);
   const settled = workers.every((w) => TERMINAL.has(w.state) && w.snapshot && !w.test?.running);
   const ready = workers.length > 0 && settled;
   const spent = run.ledger.spent;
@@ -201,6 +204,7 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
         ? `${done} of ${workers.length} tasks done`
         : 'Planning the work',
     ready,
+    reviewable,
     budget: {
       used: spent,
       limit: run.ledger.limitTokens,

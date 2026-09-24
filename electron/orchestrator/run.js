@@ -24,6 +24,10 @@ import { Worker } from './worker.js';
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
 
+function lastLine(text) {
+  return String(text ?? '').trim().split('\n').pop() ?? '';
+}
+
 // A commit subject, not a transcript of the prompt. First line, first sentence,
 // trimmed to something a git log can show.
 export function snapshotMessage(worker) {
@@ -193,10 +197,13 @@ export class Run extends EventEmitter {
     const reviews = await this.reviewAll();
     const byBranch = new Map(reviews.map((r) => [r.branch, r]));
     const ticked = new Set(acknowledged);
+    const landed = new Set(this.merges.map((m) => m.branch));
     for (const { branch, sha } of reviewed) {
       const current = byBranch.get(branch);
       if (!current) return { error: `${branch} is not a branch of this run` };
-      if (current.sha !== sha) return { error: `${branch} changed since you reviewed it; review it again` };
+      const worker = this.workers.find((w) => w.branch === branch);
+      const verdict = policy.canMergeBranch(worker, { reviewedSha: sha, tipSha: current.sha, merged: landed.has(branch) });
+      if (!verdict.ok) return { error: verdict.reason };
     }
     const unacknowledged = reviewed
       .flatMap(({ branch }) => byBranch.get(branch).flagged.map((f) => ({ worker: byBranch.get(branch).id, ...f })))
@@ -227,10 +234,17 @@ export class Run extends EventEmitter {
         ]);
         merged.push({ branch, sha, worker: worker.id, at: Date.now() });
       } catch (err) {
-        // A conflict leaves the user's checkout mid-merge. Put it back.
+        // Say what collided before putting the checkout back: once aborted,
+        // git no longer knows.
+        const conflicted = await execFile('git', ['-C', this.repo, 'diff', '--name-only', '--diff-filter=U'])
+          .then(({ stdout }) => stdout.trim().split('\n').filter(Boolean))
+          .catch(() => []);
         await execFile('git', ['-C', this.repo, 'merge', '--abort']).catch(() => {});
         this.merges.push(...merged);
-        return { error: `merge of ${branch} failed: ${String(err.message).split('\n')[0]}`, merged };
+        const why = conflicted.length
+          ? `conflicts with what is already on your branch in ${conflicted.join(', ')}`
+          : lastLine(err.stderr) || 'git refused it';
+        return { error: `merge of ${branch} failed: ${why}. Nothing was changed.`, conflicted, merged };
       }
     }
     this.merges.push(...merged);

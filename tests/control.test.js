@@ -140,3 +140,14 @@ test('the relay exits when BotWatch goes away, instead of outliving it', async (
   if (outcome === 'still running') child.kill();
   assert.equal(outcome, 0);
 });
+
+test('the review opens once one worker is ready, while others still run', () => {
+  const run = fakeRun();
+  const live = { run, orchestrator: { state: 'running' }, startedAt: 0, closed: false };
+  run.workers.push({ id: 'w1', state: 'done', snapshot: { sha: 'a' }, test: { passed: true } });
+  run.workers.push({ id: 'w2', state: 'running' });
+  const view = runView(live, 0);
+  assert.equal(view.reviewable, true);
+  assert.equal(view.ready, false, 'not everything is finished');
+  dispose(run);
+});

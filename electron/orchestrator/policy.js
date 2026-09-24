@@ -74,8 +74,20 @@ export function canSpawn(state, limits) {
 // click. The model can ask; only the click decides.
 export function canMerge(state) {
   if (!state.userApprovedMerge) return { ok: false, reason: 'merge needs the user to click Merge' };
-  if (state.workers.some((w) => w.state === 'running')) {
-    return { ok: false, reason: 'workers still running' };
+  return { ok: true };
+}
+
+// Whether one worker's branch may merge. Per branch, not per run: a finished
+// worker's work can land while others are still going. Finished, snapshotted,
+// tested, not merged already, and still at the commit the user reviewed.
+export function canMergeBranch(worker, { reviewedSha, tipSha, merged = false }) {
+  if (!worker) return { ok: false, reason: 'not a worker of this run' };
+  if (merged) return { ok: false, reason: `${worker.branch} is already merged` };
+  if (worker.state !== 'done') return { ok: false, reason: `${worker.id} has not finished (${worker.state})` };
+  if (!worker.snapshot?.sha) return { ok: false, reason: `${worker.id} has no snapshot yet` };
+  if (worker.test?.running) return { ok: false, reason: `${worker.id}'s tests are still running` };
+  if (tipSha !== reviewedSha || worker.snapshot.sha !== reviewedSha) {
+    return { ok: false, reason: `${worker.branch} changed since you reviewed it; review it again` };
   }
   return { ok: true };
 }

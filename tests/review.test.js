@@ -204,3 +204,66 @@ test('setup starts on acceptEdits even for a bypass user, and never offers above
   });
   assert.deepEqual(permissionChoices('default'), { offered: ['plan', 'default'], start: 'default' });
 });
+
+// Three worktrees off one repo: w1 and w3 both rewrite app.js, w2 is busy.
+function three() {
+  const f = fixture();
+  const trees = { w1: f.wt };
+  for (const id of ['w2', 'w3']) {
+    trees[id] = join(f.root, id);
+    git(f.repo, 'worktree', 'add', '-q', '-b', `bw/${id}-task`, trees[id]);
+  }
+  const run = new Run({ repo: f.repo, goal: 'g', model: 'haiku' });
+  run.testWorktree = async () => ({ passed: true, exitCode: 0 });
+  for (const id of ['w1', 'w2', 'w3']) {
+    run.workers.push({ id, task: id, branch: `bw/${id}-task`, base: 'main', cwd: trees[id], state: 'done', doneAt: 1 });
+  }
+  return { ...f, trees, run };
+}
+
+test('a finished worker merges while another is still running, which is left untouched', async () => {
+  const { repo, trees, run } = three();
+  writeFileSync(join(trees.w1, 'one.js'), '1\n');
+  await run.snapshot(run.workers[0]);
+  const w2 = run.workers[1];
+  w2.state = 'running';
+  writeFileSync(join(trees.w2, 'wip.js'), 'half done\n');
+  const w2TipBefore = git(repo, 'rev-parse', 'bw/w2-task');
+
+  const reviews = await run.reviewAll();
+  const r1 = reviews.find((r) => r.id === 'w1');
+  run.userApprovedMerge = true;
+  const out = await run.merge({ reviewed: [{ branch: r1.branch, sha: r1.sha }] });
+  assert.equal(out.error, undefined, out.error);
+
+  assert.match(git(repo, 'log', '-1', '--format=%s', 'main'), /merge bw\/w1-task \(w1 @/);
+  assert.equal(git(repo, 'rev-parse', 'bw/w2-task'), w2TipBefore, "w2's branch did not move");
+  assert.equal(git(trees.w2, 'status', '--porcelain'), '?? wip.js', "w2's work in progress is still there");
+
+  // And the running one cannot be merged, whatever the click says.
+  const r2 = reviews.find((r) => r.id === 'w2');
+  assert.match((await run.merge({ reviewed: [{ branch: r2.branch, sha: r2.sha }] })).error, /has not finished/);
+  // Nor can w1 merge a second time.
+  assert.match((await run.merge({ reviewed: [{ branch: r1.branch, sha: r1.sha }] })).error, /already merged/);
+});
+
+test('a later merge that conflicts with one that landed is aborted cleanly', async () => {
+  const { repo, trees, run } = three();
+  writeFileSync(join(trees.w1, 'app.js'), 'export const a = "w1";\n');
+  writeFileSync(join(trees.w3, 'app.js'), 'export const a = "w3";\n');
+  await run.snapshot(run.workers[0]);
+  await run.snapshot(run.workers[2]);
+  const reviews = await run.reviewAll();
+  const pick = (id) => reviews.filter((r) => r.id === id).map((r) => ({ branch: r.branch, sha: r.sha }));
+  run.userApprovedMerge = true;
+
+  assert.equal((await run.merge({ reviewed: pick('w1') })).error, undefined);
+  const afterW1 = git(repo, 'rev-parse', 'main');
+  const out = await run.merge({ reviewed: pick('w3') });
+  assert.equal(out.error, 'merge of bw/w3-task failed: conflicts with what is already on your branch in app.js. Nothing was changed.');
+  assert.deepEqual(out.conflicted, ['app.js']);
+  assert.equal(git(repo, 'rev-parse', 'main'), afterW1, 'main is where w1 left it');
+  assert.equal(git(repo, 'status', '--porcelain'), '', 'no conflict left in the checkout');
+  assert.equal(existsSync(join(repo, '.git', 'MERGE_HEAD')), false);
+  assert.equal(readFileSync(join(repo, 'app.js'), 'utf8'), 'export const a = "w1";\n');
+});

@@ -178,7 +178,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
   }
 
   function openReviewOrNothing() {
-    if (lastRun?.ready) return openReview();
+    if (lastRun?.reviewable) return openReview();
     return null;
   }
 
@@ -187,100 +187,108 @@ export function createOrchestrate({ dock, host, statusEl }) {
   async function openReview() {
     host.keyboard?.(true);
     const { reviews = [], error: failed } = await api.review();
+    const byId = new Map((lastRun?.workers ?? []).map((w) => [w.id, w]));
+    const landed = new Map((lastRun?.merges ?? []).map((m) => [m.branch, m]));
     const root = el('div', 'review');
     root.append(el('div', 'panel__title', `Review · ${lastRun?.repo ?? ''}`));
     if (failed) root.append(el('div', 'panel__error', failed));
 
-    // One checkbox per flagged file: acknowledging is naming each file, not
-    // waving them all through. Merge stays clickable, because the refusal
-    // that counts is pilld's, and it names what is still unacknowledged.
-    const acks = [];
-    const merge = el('button', 'btn btn--accent', `Merge ${reviews.length} branch${reviews.length === 1 ? '' : 'es'}`);
-    merge.type = 'button';
-    const refresh = () => {
-      merge.disabled = !reviews.length;
-    };
-
-    for (const r of reviews) {
-      const card = el('section', 'review__branch');
-      card.dataset.branch = r.branch;
-      const head = el('div', 'review__head');
-      head.append(el('span', 'review__id', r.id), el('span', 'review__task', r.task ?? ''));
-      card.append(head);
-
-      const prov = el('dl', 'review__prov');
-      const add = (k, v, cls) => {
-        prov.append(el('dt', null, k));
-        prov.append(el('dd', cls, v));
-      };
-      add('branch', `${r.branch} ← ${r.base}`);
-      add('snapshot', r.sha ? `${r.sha.slice(0, 10)} · ${time(r.snapshot?.at)}` : 'not snapshotted');
-      if (!r.test?.command) add('tests', 'no test command set', 'is-muted');
-      else if (r.test.running) add('tests', `${r.test.command} · running…`);
-      else {
-        const verdict = r.test.passed ? 'passed' : r.test.timedOut ? 'timed out' : `failed (exit ${r.test.exitCode})`;
-        const stale = r.test.sha && r.sha && r.test.sha !== r.sha ? ' · ran on an older snapshot' : '';
-        add('tests', `${r.test.command} · ${verdict} · ${time(r.test.finishedAt)}${stale}`, r.test.passed ? 'is-pass' : 'is-fail');
-      }
-      card.append(prov);
-      if (r.test?.tail && !r.test.passed) {
-        const out = el('details', 'review__tail');
-        out.append(el('summary', null, 'test output'), el('pre', null, r.test.tail));
-        card.append(out);
-      }
-
-      const flaggedBy = new Map(r.flagged.map((f) => [f.file, f.reason]));
-      const list = (title, entries) => {
-        const block = el('div', 'review__files');
-        block.append(el('div', 'review__files-title', `${title} · ${entries.length}`));
-        if (!entries.length) block.append(el('div', 'review__none', 'none'));
-        for (const entry of entries) {
-          const line = el('div', 'review__file');
-          line.append(el('span', 'review__path', entry.file));
-          line.append(el('span', 'review__delta', entry.deleted ? 'deleted' : `+${entry.added} −${entry.removed}`));
-          const reason = flaggedBy.get(entry.file);
-          if (reason) {
-            line.classList.add('is-flagged');
-            const ack = el('label', 'review__ack');
-            const box = el('input');
-            box.type = 'checkbox';
-            box.dataset.ack = `${r.id}:${entry.file}`;
-            box.addEventListener('change', refresh);
-            acks.push(box);
-            ack.append(box, el('span', null, `${reason} — merge it anyway`));
-            line.append(ack);
-          }
-          block.append(line);
-        }
-        return block;
-      };
-      card.append(list('Edits', r.edits), list('New files', r.added));
-      root.append(card);
-    }
-
-    const result = el('div', 'panel__error');
-    merge.addEventListener('click', async () => {
-      merge.disabled = true;
-      result.className = 'panel__error';
-      const outcome = await api.merge({
-        reviewed: reviews.map((r) => ({ branch: r.branch, sha: r.sha })),
-        acknowledged: acks.filter((b) => b.checked).map((b) => b.dataset.ack),
-      });
-      if (outcome?.error) {
-        const files = (outcome.flagged ?? []).map((f) => `${f.worker}:${f.file}`).join(', ');
-        result.textContent = files ? `${outcome.error}: ${files}` : outcome.error;
-        refresh();
-        return;
-      }
-      result.className = 'panel__ok';
-      result.textContent = outcome.merged.map((m) => `merged ${m.branch} @ ${m.sha.slice(0, 7)}`).join(' · ');
-    });
-    refresh();
+    // Merge is per worker: a finished worker's branch can land while others
+    // still run, and each lands as its own merge commit.
+    for (const r of reviews) root.append(reviewCard(r, byId.get(r.id), landed.get(r.branch)));
 
     const actions = el('div', 'panel__actions');
-    actions.append(button('Close', '', closePanel), el('div', 'footer__spacer'), merge);
-    root.append(result, actions);
+    actions.append(button('Close', '', closePanel));
+    root.append(actions);
     showPanel('review', root);
+  }
+
+  function reviewCard(r, worker, landed) {
+    const card = el('section', 'review__branch');
+    card.dataset.branch = r.branch;
+    const head = el('div', 'review__head');
+    head.append(el('span', 'review__id', r.id), el('span', 'review__task', r.task ?? ''));
+    card.append(head);
+
+    const prov = el('dl', 'review__prov');
+    const add = (k, v, cls) => {
+      prov.append(el('dt', null, k));
+      prov.append(el('dd', cls, v));
+    };
+    add('branch', `${r.branch} ← ${r.base}`);
+    add('snapshot', r.snapshot?.sha ? `${r.snapshot.sha.slice(0, 10)} · ${time(r.snapshot.at)}` : 'not snapshotted yet');
+    if (!r.test?.command) add('tests', r.snapshot ? 'no test command set' : '—', 'is-muted');
+    else if (r.test.running) add('tests', `${r.test.command} · running…`);
+    else {
+      const verdict = r.test.passed ? 'passed' : r.test.timedOut ? 'timed out' : `failed (exit ${r.test.exitCode})`;
+      add('tests', `${r.test.command} · ${verdict} · ${time(r.test.finishedAt)}`, r.test.passed ? 'is-pass' : 'is-fail');
+    }
+    card.append(prov);
+    if (r.test?.tail && r.test.passed === false) {
+      const out = el('details', 'review__tail');
+      out.append(el('summary', null, 'test output'), el('pre', null, r.test.tail));
+      card.append(out);
+    }
+
+    const acks = [];
+    const flaggedBy = new Map(r.flagged.map((f) => [f.file, f.reason]));
+    const list = (title, entries) => {
+      const block = el('div', 'review__files');
+      block.append(el('div', 'review__files-title', `${title} · ${entries.length}`));
+      if (!entries.length) block.append(el('div', 'review__none', 'none'));
+      for (const entry of entries) {
+        const line = el('div', 'review__file');
+        line.append(el('span', 'review__path', entry.file));
+        line.append(el('span', 'review__delta', entry.deleted ? 'deleted' : `+${entry.added} −${entry.removed}`));
+        const reason = flaggedBy.get(entry.file);
+        if (reason) {
+          line.classList.add('is-flagged');
+          const ack = el('label', 'review__ack');
+          const box = el('input');
+          box.type = 'checkbox';
+          box.dataset.ack = `${r.id}:${entry.file}`;
+          acks.push(box);
+          ack.append(box, el('span', null, `${reason} — merge it anyway`));
+          line.append(ack);
+        }
+        block.append(line);
+      }
+      return block;
+    };
+    card.append(list('Edits', r.edits), list('New files', r.added));
+
+    const foot = el('div', 'review__foot');
+    const result = el('div', 'panel__error');
+    if (landed) {
+      result.className = 'panel__ok';
+      result.textContent = `merged @ ${landed.sha.slice(0, 7)} · ${time(landed.at)}`;
+      foot.append(result);
+    } else if (worker?.state !== 'done' || !r.snapshot || r.test?.running) {
+      foot.append(el('div', 'review__none', `${r.id} is ${worker?.state ?? 'not ready'} — it can merge once it has finished and been tested`));
+    } else {
+      const merge = button(`Merge ${r.id}`, 'btn--accent', async () => {
+        merge.disabled = true;
+        result.className = 'panel__error';
+        const outcome = await api.merge({
+          reviewed: [{ branch: r.branch, sha: r.sha }],
+          acknowledged: acks.filter((b) => b.checked).map((b) => b.dataset.ack),
+        });
+        if (outcome?.error) {
+          const files = (outcome.flagged ?? []).map((f) => `${f.worker}:${f.file}`).join(', ');
+          result.textContent = files ? `${outcome.error}: ${files}` : outcome.error;
+          merge.disabled = false;
+          return;
+        }
+        const [m] = outcome.merged;
+        result.className = 'panel__ok';
+        result.textContent = `merged @ ${m.sha.slice(0, 7)} · ${time(m.at)}`;
+        merge.remove();
+      });
+      merge.dataset.merge = r.id;
+      foot.append(result, el('div', 'footer__spacer'), merge);
+    }
+    card.append(foot);
+    return card;
   }
 
   // ---- the tree ----------------------------------------------------------
@@ -339,7 +347,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
     else footer.append(holdToStop());
     footer.append(el('div', 'footer__spacer'));
     const review = button(run.ready ? 'Review and merge' : 'Review', 'btn--accent', openReview);
-    review.disabled = !run.ready;
+    review.disabled = !run.reviewable;
     footer.append(review);
     runEl.append(pill);
   }

@@ -136,6 +136,15 @@ None open. Don't reopen these without a new reason.
      starts. Not a tool call, so the deny rules don't see it; empty, so git never merges it.
    - The run tree must not rebuild under a click; it now rebuilds only when its content changes.
    - Not built: "Review in terminal", Pause/Resume (only Stop), the allowance line in setup.
+   - **Merge is per branch** (`policy.canMergeBranch`): the worker is finished, snapshotted,
+     tested, not already merged, and still at the reviewed SHA. Other workers running or queued
+     don't block it. Proven live with three workers: w1 merged while w2 ran (w2's branch tip and
+     worktree unchanged), w3 conflicted with w1 and was aborted leaving `main` clean, w2 merged
+     separately once done — two `--no-ff` commits.
+   - **Workers under acceptEdits can't run commands.** Headless, anything not read-only needs an
+     approval nobody can give — including the worker's own `npm test`. Setup still starts on
+     acceptEdits; bypass (sandboxed) is the explicit choice that lets workers run their tests.
+   - **Claude Code refuses a standalone `sleep`** in a worker, even in the foreground.
 4. **`docs/THREAT-MODEL.md`** separating: the checkout's files; refs and history; secret
    exfiltration; bad generated code. For each: what BotWatch does, what it relies on, what's open.
 5. **Recovery**, as integration scripts in `tools/`: app killed mid-run, worker crashed, stale

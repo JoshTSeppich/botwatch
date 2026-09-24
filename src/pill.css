@@ -1223,3 +1223,10 @@
   color: var(--wait-ink-2);
   font-family: var(--sans);
 }
+
+.review__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
