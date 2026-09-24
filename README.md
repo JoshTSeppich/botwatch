@@ -126,6 +126,7 @@ if a worker ran again since, Merge refuses and asks you to look again. Each bran
 
 ## What stops a worker touching your work
 
+The long version, with every measurement, is [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 Everything in this section reduces blast radius — how much a worker can reach when it goes wrong
 — and none of it is a formal security boundary.
 
@@ -183,6 +184,9 @@ still write to your checkout by absolute path, with no git involved.
 
 ### The holes, in the order I'd expect them to be hit
 
+- **A worker can read anything you can**, including `~/.ssh` (measured). Its network is limited to
+  Anthropic and the npm, PyPI and crates.io registries, but a request to one of those can carry
+  what it read. [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) has the measurements and the rest.
 - `BOTWATCH_GUARD= git merge` still gets past the ref hook's env check. The sandbox stops the
   merge from reaching your checkout's `.git`, so this is narrower than it was, but the env check
   is a marker and not a lock.
