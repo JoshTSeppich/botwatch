@@ -1,8 +1,13 @@
-// Real session discovery. Claude Code already writes down most of what the pill
-// needs, so this module reads rather than guesses:
+// Real session discovery. Three sources, each for what only it knows:
 //
-//   ~/.claude/sessions/<pid>.json          pid, sessionId, cwd, name, startedAt
-//   ~/.claude/projects/<slug>/<id>.jsonl   state, model, per-turn token usage
+//   ~/.claude/sessions/<pid>.json          which sessions exist: pid, sessionId, cwd, startedAt
+//   hook events, via bw-hook and pilld     what each one is doing, and whether it needs you
+//   ~/.claude/projects/<slug>/<id>.jsonl   model and per-turn token usage
+//
+// The transcript still says what a session is doing until its first hook event
+// arrives — a session started before BotWatch, or one with the plugin not
+// installed. Once a hook has spoken for a session, the transcript never
+// overrides it.
 //
 // It deliberately does not read ~/.claude/stats-cache.json: on this machine
 // that file was five months stale, so today's numbers come from the transcripts
@@ -19,13 +24,12 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { firstSentence, phrase } from './phrase.js';
+import { createRegistry, STALL_AFTER_MS } from './registry.js';
+
 const run = promisify(execFile);
 const CLAUDE = join(homedir(), '.claude');
 
-// Nothing has happened for this long while a turn is still open: the session is
-// probably stuck. Ten minutes, not two, because a long build or test run is
-// silent for minutes at a time and a false "stuck" is worse than a late one.
-const STALL_AFTER_MS = 600_000;
 const WEEK_MS = 7 * 86_400_000;
 const SLOT_MS = 600_000;
 const BURN_SLOTS = 6;
@@ -40,9 +44,15 @@ const targets = new Map();
 let transcriptIndex = null;
 let weekScan = null;
 
+// Fed by pilld from the main process; read here on every poll.
+export const registry = createRegistry();
+
 export async function read() {
   const sessions = [];
-  for (const entry of await discover()) {
+  const listed = await discover();
+  registry.prune(new Set(listed.map((e) => e.sessionId)), Date.now());
+  for (const entry of listed) {
+    registry.answered(entry.sessionId, entry.status, entry.statusAt);
     const path = await locate(entry.sessionId);
     const tail = path ? await follow(path) : null;
     sessions.push(describe(entry, tail));
@@ -84,6 +94,10 @@ async function discover() {
       cwd: entry.cwd ?? '',
       name: entry.name ?? '',
       startedAt: Number(entry.startedAt) || Date.now(),
+      // Claude Code's own idle/busy/waiting. Used for one thing: noticing a
+      // prompt was answered before the tool it allowed has finished.
+      status: entry.status ?? null,
+      statusAt: Number(entry.statusUpdatedAt) || 0,
     });
     if (!targets.has(entry.sessionId)) targets.set(entry.sessionId, await resolveTarget(pid));
   }
@@ -254,26 +268,39 @@ function describe(entry, tail) {
   const last = tail?.last ?? null;
   const turn = tail?.lastTurn ?? null;
   const at = last?.timestamp ? Date.parse(last.timestamp) : entry.startedAt;
+  const hooked = registry.get(entry.sessionId, Date.now());
   return {
     id: entry.sessionId,
     index: 0,
     pid: entry.pid,
     repo: entry.cwd,
-    model: modelName(tail?.model),
-    state: stateOf(turn, at),
-    summary: summaryOf(turn, tail?.lastAssistant),
+    model: modelName(tail?.model ?? hooked?.model),
+    state: hooked?.state ?? stateOf(turn, at),
+    // permission, question or turn — what kind of "needs you" this is.
+    needs: hooked ? hooked.needs : null,
+    source: hooked ? 'hook' : 'transcript',
+    summary: hookSummary(hooked) ?? summaryOf(turn, tail?.lastAssistant),
     etaSeconds: null,
     startedAt: entry.startedAt,
     tokens: tail?.tokens ?? 0,
   };
 }
 
+// A Stop hook that did not carry the reply leaves only "waiting for you"; the
+// transcript has the reply itself by then.
+function hookSummary(hooked) {
+  if (!hooked) return null;
+  if (hooked.needs === 'turn' && hooked.summary === 'waiting for you') return null;
+  return hooked.summary;
+}
+
 // claude-opus-5 -> opus 5. Family plus version, lowercase, no vendor prefix.
-function modelName(id) {
+export function modelName(id) {
   if (!id) return 'unknown';
   const parts = String(id).replace(/^claude-/, '').split('-');
   const family = parts.shift() ?? '';
-  const version = parts.filter((p) => /^\d+$/.test(p)).join('.');
+  // Short numbers only: a date stamp like 20251001 is not a version.
+  const version = parts.filter((p) => /^\d{1,2}$/.test(p)).join('.');
   return version ? `${family} ${version}` : family;
 }
 
@@ -313,58 +340,9 @@ function summaryOf(turn, lastAssistant) {
   }
   if (ended) return 'waiting for you';
   const call = contentOf(lastAssistant).find((p) => p.type === 'tool_use');
-  if (call) return phrase(call);
+  if (call) return phrase(call.name, call.input ?? {});
   if (last) return 'working';
   return 'idle';
-}
-
-function phrase(call) {
-  const input = call.input ?? {};
-  if (call.name === 'Bash') return `running ${program(input.command)}`;
-  if (call.name === 'Read') return `reading ${basename(input.file_path)}`;
-  if (call.name === 'Edit' || call.name === 'Write') return `editing ${basename(input.file_path)}`;
-  if (call.name === 'Grep' || call.name === 'Glob') return 'searching the codebase';
-  if (call.name === 'Task') return 'running a subagent';
-  if (call.name === 'TodoWrite') return 'planning the next steps';
-  return `using ${toolLabel(call.name)}`;
-}
-
-// mcp__chrome-devtools__list_pages is a wire name, not something to read at 3m.
-function toolLabel(name) {
-  const parts = String(name).split('__');
-  return parts.length > 1 ? parts[parts.length - 1] : name;
-}
-
-// Shell one-liners start with things that say nothing: cd, for, env prefixes.
-// Walk past them to the command that is actually doing the work.
-const SHELL_NOISE = new Set([
-  'cd', 'export', 'set', 'sudo', 'time',
-  'for', 'while', 'until', 'if', 'do', 'then', 'done', 'fi', 'else', 'elif', 'esac', 'case',
-]);
-
-function program(command) {
-  const segments = String(command ?? '').split(/&&|\|\||;|\|/);
-  for (const segment of segments) {
-    const words = segment.trim().split(/\s+/).filter(Boolean);
-    const name = words[0];
-    if (!name || SHELL_NOISE.has(name) || name.includes('=')) continue;
-    // Multiplexers carry their meaning in the subcommand: "npm test", "git log".
-    const carriesSubcommand = ['npm', 'npx', 'git', 'uv', 'cargo', 'pnpm', 'yarn', 'node', 'python3', 'make'];
-    const short = name.split('/').pop();
-    const sub = words[1] && !words[1].startsWith('-') ? words[1] : null;
-    return carriesSubcommand.includes(short) && sub ? `${short} ${sub}` : short;
-  }
-  return 'a command';
-}
-
-function basename(path) {
-  return String(path ?? '').split('/').pop() || 'a file';
-}
-
-function firstSentence(text) {
-  const clean = String(text).replace(/\s+/g, ' ').trim();
-  const stop = clean.search(/[.!?](\s|$)/);
-  return stop === -1 ? clean : clean.slice(0, stop);
 }
 
 function usage(sessions) {

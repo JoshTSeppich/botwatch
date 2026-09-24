@@ -16,7 +16,14 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm test
+      # bw-hook ships as one universal binary; npm run dist builds it first.
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: npm run dist
+      - name: bw-hook is in the app, for both architectures
+        run: |
+          for app in dist/mac*/BotWatch.app; do
+            lipo "$app/Contents/Resources/claude-plugin/botwatch/bin/bw-hook" -verify_arch arm64 x86_64
+          done
       - uses: softprops/action-gh-release@v3
         with:
           files: |

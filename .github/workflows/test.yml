@@ -10,4 +10,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # So the socket tests run the real bw-hook instead of skipping.
+      - run: cargo build --release --manifest-path bw-hook/Cargo.toml
       - run: npm test

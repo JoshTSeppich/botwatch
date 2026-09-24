@@ -8,7 +8,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { read as readSessions } from './sessions.js';
+import { read as readSessions, startHooks } from './sessions.js';
 import { raise } from './raise.js';
 import { probe as probePermissions, request as requestPermissions } from './permissions.js';
 import { trackTerminal } from './tracker.js';
@@ -129,6 +129,9 @@ app.whenReady().then(async () => {
   offsetsPath = join(app.getPath('userData'), 'dock-offsets.json');
   offsets = await readFile(offsetsPath, 'utf8').then(JSON.parse).catch(() => ({}));
 
+  // Listening before the window exists, so the first paint already has
+  // whatever the hooks have said.
+  await startHooks();
   serveRenderer();
   createWindow();
 

@@ -1,0 +1,8 @@
+{
+  "name": "botwatch",
+  "version": "0.2.0",
+  "description": "Tells the BotWatch pill what each Claude Code session is doing, and when it needs you. Every hook runs bw-hook, which forwards the event to BotWatch's socket and exits 0 within 50ms whether or not BotWatch is running.",
+  "author": { "name": "Joshua Seppich" },
+  "repository": "https://github.com/JoshTSeppich/botwatch",
+  "license": "MIT"
+}

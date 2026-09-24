@@ -67,7 +67,14 @@ export function headline(sessions, supplied) {
   if (failed) return `Session ${failed.index} stopped — the last command failed`;
   const quiet = sessions.find((s) => s.state === 'stalled');
   if (quiet) return `Session ${quiet.index} has gone quiet`;
-  const blocked = sessions.find(isBlocked);
+  // A permission prompt and a question both block, but they are answered
+  // differently, so the sentence says which one it is.
+  const blocked =
+    sessions.find((s) => isBlocked(s) && s.needs === 'permission') ??
+    sessions.find((s) => isBlocked(s) && s.needs === 'question') ??
+    sessions.find(isBlocked);
+  if (blocked?.needs === 'permission') return `Session ${blocked.index} needs your permission`;
+  if (blocked?.needs === 'question') return `Session ${blocked.index} is asking you a question`;
   if (blocked) return `Waiting for your answer in session ${blocked.index}`;
   const top = longestRunning(sessions);
   return top?.summary ?? 'idle';

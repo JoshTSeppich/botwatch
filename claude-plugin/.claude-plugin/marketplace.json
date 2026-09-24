@@ -1,0 +1,11 @@
+{
+  "name": "botwatch",
+  "owner": { "name": "Joshua Seppich" },
+  "plugins": [
+    {
+      "name": "botwatch",
+      "source": "./botwatch",
+      "description": "Tells the BotWatch pill what each Claude Code session is doing, and when it needs you."
+    }
+  ]
+}

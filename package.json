@@ -8,6 +8,8 @@
     "start": "electron .",
     "demo": "python3 -m http.server 4173",
     "test": "node --test tests/*.test.js",
+    "hook": "sh tools/build-hook.sh",
+    "predist": "npm run hook",
     "dist": "electron-builder --mac"
   },
   "devDependencies": {
@@ -26,6 +28,15 @@
       "src/**/*",
       "index.html",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "claude-plugin",
+        "to": "claude-plugin",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
