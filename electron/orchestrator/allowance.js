@@ -64,6 +64,7 @@ export function modelChip(modelId) {
   if (!modelId) return null;
   const parts = String(modelId).replace(/^claude-/, '').split('-');
   const family = parts.shift() ?? '';
-  const version = parts.filter((p) => /^\d+$/.test(p)).join('.');
+  // Short numbers only: a date stamp like 20251001 is not a version.
+  const version = parts.filter((p) => /^\d{1,2}$/.test(p)).join('.');
   return version ? `${family} ${version}` : family || null;
 }
