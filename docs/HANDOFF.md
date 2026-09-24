@@ -14,8 +14,12 @@ measured against the real CLI; where something is unverified it says so.
 | v3 UI | **collapsed line + expanded tree only** |
 | v2 (reply and approve) | **not started** |
 
-78 tests, 35 commits. `npm test` must exit 0 before any commit — gate on the exit code, never on
+99 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
 grepping its output. I once pushed a red test because `npm test | grep` matched the failure line.
+
+**No Co-Authored-By or AI attribution trailers in commits.** This overrides any tool default. Check
+before pushing: `git log origin/main..main --format='%h %s%n%b' | grep -i co-authored-by` must
+print nothing.
 
 ## The reference files, and which one governs what
 
