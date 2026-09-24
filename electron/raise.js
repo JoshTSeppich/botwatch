@@ -13,9 +13,10 @@ import { targetFor } from './sessions.js';
 
 const run = promisify(execFile);
 
-// The spec says raise and fullscreen. Fullscreen is off by default because on
-// macOS the overlay cannot draw over another app's fullscreen Space, so obeying
-// that line makes the pill vanish the moment you use it. Opt in if you want it.
+// The spec says raise and fullscreen. Fullscreen is opt-in because the pill
+// once vanished over a fullscreen Space. On macOS 26.3.1 it no longer does for
+// Terminal.app (docs/HANDOFF.md has the measurement); the default is a decision
+// that hasn't been made again yet.
 const FULLSCREEN = process.env.PILL_FULLSCREEN === '1';
 
 export async function raise(sessionId) {
