@@ -4,6 +4,8 @@ I run four or five Claude Code sessions at once and I kept losing track of them.
 working, which one has been sitting there for ten minutes waiting for me to answer a question,
 which one died. Checking meant cycling through terminal windows.
 
+Run agents in parallel. Review every change. Merge deliberately.
+
 So this is a small always-on-top pill that docks to the top edge of your terminal and tells you,
 without you asking: how many sessions are live, what each one is doing, which one needs you, and
 how much of the week's token budget is gone. Click a row and it brings that session's terminal
@@ -123,6 +125,9 @@ if a worker ran again since, Merge refuses and asks you to look again. Each bran
 
 ## What stops a worker touching your work
 
+Everything in this section reduces blast radius — how much a worker can reach when it goes wrong
+— and none of it is a formal security boundary.
+
 Two different problems, and conflating them is a mistake I made twice. **Refs and history** are
 one problem. **Files on disk** are another, and nothing about git solves it: any session with a
 shell, running as you, can write anywhere you can.
@@ -183,7 +188,8 @@ still write to your checkout by absolute path, with no git involved.
 - `git reset --hard` overwrites the working tree *before* touching any ref — inside the worker's
   own worktree, where the sandbox confines it. Your checkout is out of reach; the worker's own
   work is not.
-- Anything the sandbox itself doesn't cover. It is an OS boundary, not a proof.
+- Anything the sandbox itself doesn't cover. It reduces blast radius; it is not a formal
+  security boundary.
 
 Ref and history safety would get better with a clone per worker —
 [docs/tickets/separate-clones.md](docs/tickets/separate-clones.md), not built. File safety is the

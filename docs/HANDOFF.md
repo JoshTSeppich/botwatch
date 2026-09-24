@@ -84,7 +84,8 @@ refused, and the same ref merges cleanly when pilld does it.
 - **No live weekly plan limit exists.** `rate_limit_event` appears only in `stream-json` output from
   a `claude -p` run, i.e. only when a worker runs. Zero genuine records across 33 transcripts;
   nothing on disk. A refresh probe costs ~24k tokens, so don't poll for it.
-- The sandbox is an OS boundary, not a proof.
+- The sandbox reduces blast radius; it is not a formal security boundary. README uses this wording
+  and should keep it.
 - **Separate clones** would improve ref and history safety and do nothing for file writes —
   `docs/tickets/separate-clones.md`, not built.
 
