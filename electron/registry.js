@@ -8,7 +8,7 @@
 // asking you a question or asking you to allow something. They cannot say
 // when a session died without saying goodbye; liveness stays the pid's job.
 
-import { firstSentence, permissionLine, phrase, questionLine } from './phrase.js';
+import { firstSentence, permissionLine, phrase, questionLine } from './orchestrator/phrase.js';
 
 // Nothing has happened for this long while a turn is still open: the session is
 // probably stuck. Ten minutes, because a long build or test run is silent for

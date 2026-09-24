@@ -17,6 +17,7 @@ import {
 } from './model.js';
 import { createHost } from './host.js';
 import { wireClickThrough, wireDrag, wireExpand, wireMenu, wireRaise } from './interact.js';
+import { createOrchestrate } from './orchestrate.js';
 import { createStatusPill, createUsagePill } from './render.js';
 
 const TICK_MS = 1000;
@@ -67,6 +68,7 @@ export function start(dock) {
   wireMenu(status, host);
   wireMenu(usage, host);
   wireClickThrough(dock, host);
+  const orchestrate = createOrchestrate({ dock, host, statusEl: status.el });
 
   async function tick() {
     latest = await host.read();
@@ -84,6 +86,8 @@ export function start(dock) {
     // is worse than one.
     usage.el.style.display = blocked ? 'none' : '';
     if (latest.usage && !blocked) usage.update(usageView(latest.usage));
+    // While a run is going it owns the status slot.
+    orchestrate.update(blocked ? null : latest.run ?? null);
   }
 
   void tick();

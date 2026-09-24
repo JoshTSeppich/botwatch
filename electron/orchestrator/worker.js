@@ -6,6 +6,7 @@
 
 import { spawn } from 'node:child_process';
 
+import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
 import { EventEmitter } from 'node:events';
@@ -23,6 +24,7 @@ export function readEvent(record) {
     return {
       kind: 'progress',
       tool: call?.name ?? null,
+      input: call?.input ?? null,
       text: Array.isArray(content) ? content.find((p) => p.type === 'text')?.text ?? null : null,
       tokens: usage
         ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
@@ -94,9 +96,23 @@ export function workerArgs({ model, permissionMode, protect = [] }) {
 }
 
 export class Worker extends EventEmitter {
-  constructor({ id, task, cwd, branch, base, model, permissionMode, protect = [], gitDir = null }) {
+  // `brief` and `extraArgs` are how the orchestrator session reuses this: it
+  // is the same kind of process with a different job and an MCP server.
+  constructor({
+    id,
+    task,
+    cwd,
+    branch,
+    base,
+    model,
+    permissionMode,
+    protect = [],
+    gitDir = null,
+    brief = WORKER_BRIEF,
+    extraArgs = [],
+  }) {
     super();
-    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir });
+    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs });
     this.state = 'queued';
     this.tokens = 0;
     this.sessionId = null;
@@ -104,14 +120,14 @@ export class Worker extends EventEmitter {
   }
 
   start() {
-    const args = workerArgs(this);
+    const args = [...workerArgs(this), ...this.extraArgs];
     this.child = spawn('claude', args, {
       cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: guardedEnv(),
     });
     this.state = 'running';
-    this.message(`${WORKER_BRIEF}\n${this.task}`);
+    this.message(`${this.brief}\n${this.task}`);
 
     let buffer = '';
     this.child.stdout.on('data', (chunk) => {
@@ -144,7 +160,7 @@ export class Worker extends EventEmitter {
       this.emit('tokens', this, event.tokens);
     }
     if (event.kind === 'progress' && (event.tool || event.text)) {
-      this.summary = event.tool ? `running ${event.tool}` : event.text;
+      this.summary = event.tool ? phrase(event.tool, event.input ?? {}) : plain(event.text);
     }
     if (event.kind === 'limits') {
       this.limits = { fiveHour: event.fiveHour, sevenDay: event.sevenDay };

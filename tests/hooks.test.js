@@ -216,3 +216,9 @@ test('pilld clears a stale socket file left by a crash', async () => {
   const second = await listen(() => {}, sock);
   second.close();
 });
+
+test('a worker reply becomes one plain sentence, past any "Done!"', async () => {
+  const { plain } = await import('../electron/orchestrator/phrase.js');
+  assert.equal(plain("Done! I've added the `farewell` function to **src/greet.js**. Also a test."), "I've added the farewell function to src/greet.js");
+  assert.equal(plain('Perfect! 1. **Created `scripts/build.js`** - copies src'), 'Created scripts/build.js - copies src');
+});

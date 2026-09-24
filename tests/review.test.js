@@ -184,3 +184,14 @@ test('a failing test command is a result, with its exit code and output', async 
   assert.match(result.tail, /broken/);
   assert.equal(result.sha, git(f.wt, 'rev-parse', 'HEAD'));
 });
+
+test('a worker gets the mode chosen in setup unless the orchestrator asks for less', async () => {
+  const f = fixture();
+  const run = new Run({ repo: f.repo, goal: 'g', model: 'haiku', permissionCeiling: 'acceptEdits' });
+  run.limits.maxWorkers = 0; // queue them, so nothing is started
+  await run.spawn('one');
+  await run.spawn('two', 'haiku', 'plan');
+  await run.spawn('three', 'haiku', 'bypassPermissions');
+  assert.deepEqual(run.workers.map((w) => w.permissionMode), ['acceptEdits', 'plan', 'acceptEdits']);
+  clearInterval(run.reaper);
+});

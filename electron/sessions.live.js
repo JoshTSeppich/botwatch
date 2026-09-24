@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { firstSentence, phrase } from './phrase.js';
+import { firstSentence, phrase } from './orchestrator/phrase.js';
 import { createRegistry, STALL_AFTER_MS } from './registry.js';
 
 const run = promisify(execFile);

@@ -11,6 +11,8 @@ export function phrase(name, input = {}) {
   if (name === 'Grep' || name === 'Glob') return 'searching the codebase';
   if (name === 'Task' || name === 'Agent') return 'running a subagent';
   if (name === 'TodoWrite') return 'planning the next steps';
+  if (name === 'mcp__botwatch__wait_for') return 'waiting for workers';
+  if (name === 'mcp__botwatch__spawn_worker') return `starting a worker${input.task ? `: ${firstSentence(input.task)}` : ''}`;
   return `using ${toolLabel(name)}`;
 }
 
@@ -71,4 +73,18 @@ export function firstSentence(text) {
   const clean = String(text).replace(/\s+/g, ' ').trim();
   const stop = clean.search(/[.!?](\s|$)/);
   return stop === -1 ? clean : clean.slice(0, stop + (clean[stop] === '?' ? 1 : 0));
+}
+
+// A model's reply as a row can hold it: its first sentence, without markdown.
+export function plain(text) {
+  const stripped = String(text ?? '')
+    .replace(/\*\*|__|`/g, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/^\s*(\d+\.|[-*])\s+/gm, '');
+  // "Done!" and "Perfect!" open half of all replies and say nothing a ✓
+  // doesn't; the sentence after them is the summary.
+  const clean = stripped.replace(/\s+/g, ' ').trim();
+  const sentences = clean.split(/(?<=[.!?])\s+/);
+  const useful = sentences.find((sentence) => sentence.split(' ').length >= 3) ?? sentences[0] ?? '';
+  return firstSentence(useful);
 }

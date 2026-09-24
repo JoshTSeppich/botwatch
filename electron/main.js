@@ -3,7 +3,7 @@
 // owns window geometry and nothing else — data comes from sessions.js, raising
 // from raise.js.
 
-import { app, BrowserWindow, ipcMain, Menu, Tray, net, protocol, screen } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, Tray, net, protocol, screen } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,10 +12,15 @@ import { read as readSessions, startHooks } from './sessions.js';
 import { raise } from './raise.js';
 import { probe as probePermissions, request as requestPermissions } from './permissions.js';
 import { trackTerminal } from './tracker.js';
+import { serveControl } from './orchestrator/control.js';
+import { createPilot } from './orchestrator/pilot.js';
+import { setupInfo } from './orchestrator/setup.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
-const WINDOW = { width: 800, height: 400 };
+// Tall enough for the setup and review panels, which hang below the pill. The
+// window is transparent and click-through, so its size costs nothing visible.
+const WINDOW = { width: 820, height: 720 };
 const DOCK_Y = -8;
 const SNAP_PX = 24;
 const POLL_MS = 1000;
@@ -31,6 +36,8 @@ let drag = null;
 // macOS has said yes.
 let permitted = process.platform !== 'darwin';
 let tray = null;
+// The orchestrator run, if one is going. Its view rides along on every read.
+const pilot = createPilot();
 
 function currentDisplayKey() {
   if (!terminal) return 'primary';
@@ -132,6 +139,9 @@ app.whenReady().then(async () => {
   // Listening before the window exists, so the first paint already has
   // whatever the hooks have said.
   await startHooks();
+  await serveControl(pilot.current).catch((error) => {
+    console.error(`control: not listening (${error.message}); orchestrator runs are unavailable`);
+  });
   serveRenderer();
   createWindow();
 
@@ -157,8 +167,28 @@ app.whenReady().then(async () => {
       ...(await readSessions()),
       terminal: { width: terminal?.width ?? 0 },
       permission,
+      run: pilot.view(),
     };
   });
+
+  // v3. The renderer opens the setup panel; everything that touches a repo
+  // happens here, in pilld.
+  ipcMain.handle('orch:setup', async (_event, repo) => setupInfo(repo, (await readSessions()).sessions ?? []));
+  ipcMain.handle('orch:start', (_event, config) => pilot.start(config));
+  ipcMain.handle('orch:review', () => pilot.review());
+  ipcMain.handle('orch:merge', (_event, selection) => pilot.merge(selection));
+  ipcMain.handle('orch:stop', () => pilot.stop());
+  ipcMain.handle('orch:close', () => pilot.close());
+
+  // A panel with a text field needs the keyboard, and this window never takes
+  // it otherwise. Lent while a panel is open, returned when it closes.
+  ipcMain.on('pill:keyboard', (_event, on) => {
+    if (!win) return;
+    win.setFocusable(on);
+    if (on) win.focus();
+  });
+
+  globalShortcut.register('Alt+Command+O', () => win?.webContents.send('orch:open'));
 
   ipcMain.handle('pill:grant', () => requestPermissions());
 
@@ -239,3 +269,14 @@ function pillMenu() {
 // An overlay has no windows to come back to, so the usual macOS re-activate
 // dance does not apply; quitting is the only exit.
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => globalShortcut.unregisterAll());
+
+// Quitting mid-run releases the workers and takes the ref hook back out of the
+// repo, once; the branches and worktrees stay.
+let closing = false;
+app.on('before-quit', (event) => {
+  if (closing || !pilot.current()) return;
+  closing = true;
+  event.preventDefault();
+  void pilot.close().finally(() => app.quit());
+});

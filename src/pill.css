@@ -989,3 +989,237 @@
   width: 100%;
   transition: width 600ms linear;
 }
+
+/* ---- v3 panels: setup and review ---------------------------------------
+   They hang below the pill, on the same surface as the expanded card, and are
+   the only parts of the overlay that take the keyboard. */
+
+.run-slot:empty {
+  display: none;
+}
+
+.panel {
+  position: absolute;
+  top: 44px;
+  left: 0;
+  width: 544px;
+  max-height: 640px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--pill-border);
+  background: var(--pill-bg-open);
+  box-shadow: var(--shadow-open);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.panel__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: start;
+  gap: 4px 10px;
+  margin-bottom: 9px;
+}
+
+.field__label {
+  padding-top: 5px;
+  color: var(--ink-2);
+}
+
+.field__note {
+  grid-column: 2;
+  color: var(--ink-sub);
+  font-size: 12px;
+}
+
+.panel > .setup > .field__note {
+  margin: 0 0 8px 120px;
+}
+
+.setup__goal,
+.setup__repo,
+.setup__test {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: var(--wash);
+  color: var(--ink);
+  font: 12.5px var(--sans);
+}
+
+.setup__repo,
+.setup__test {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.setup__goal:focus,
+.setup__repo:focus,
+.setup__test:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.chip-btn {
+  height: 24px;
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+}
+
+.chip-btn.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.panel__error {
+  color: var(--errored);
+  min-height: 0;
+}
+
+.panel__ok {
+  color: var(--working);
+}
+
+.review__branch {
+  border-top: 1px solid var(--rule-soft);
+  padding: 9px 0 6px;
+}
+
+.review__head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 5px;
+}
+
+.review__id {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.review__prov {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 2px 8px;
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.review__prov dt {
+  color: var(--ink-sub);
+}
+
+.review__prov dd {
+  margin: 0;
+  color: var(--ink-row);
+  overflow-wrap: anywhere;
+}
+
+.review__prov dd.is-pass {
+  color: var(--working);
+}
+
+.review__prov dd.is-fail {
+  color: var(--errored);
+}
+
+.review__prov dd.is-muted {
+  color: var(--ink-sub);
+}
+
+.review__tail pre {
+  max-height: 140px;
+  overflow: auto;
+  margin: 4px 0;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--wash);
+  font: 11.5px var(--mono);
+  white-space: pre-wrap;
+}
+
+.review__files {
+  margin-top: 6px;
+}
+
+.review__files-title {
+  color: var(--ink-2);
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.review__none {
+  color: var(--ink-sub);
+  font-size: 12px;
+}
+
+.review__file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.review__path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.review__delta {
+  color: var(--ink-sub);
+}
+
+.review__file.is-flagged {
+  border-left: 3px solid var(--waiting);
+  background: var(--wait-wash);
+}
+
+.review__ack {
+  flex-basis: 100%;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--wait-ink-2);
+  font-family: var(--sans);
+}

@@ -28,6 +28,8 @@ function nativeHost(dock) {
     endDrag: () => bridge.endDrag(),
     resetDock: () => bridge.resetDock(),
     setInteractive: (on) => bridge.setInteractive(on),
+    keyboard: (on) => bridge.keyboard(on),
+    orch: bridge.orch,
   };
 }
 

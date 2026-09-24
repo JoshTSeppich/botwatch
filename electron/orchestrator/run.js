@@ -251,7 +251,10 @@ export class Run extends EventEmitter {
     };
   }
 
-  async spawn(task, model = this.model, permissionMode = 'default') {
+  // The mode the user chose in setup is what a worker gets unless the
+  // orchestrator asks for less. Defaulting to 'default' instead left headless
+  // workers unable to edit anything: in -p there is nobody to approve a write.
+  async spawn(task, model = this.model, permissionMode = this.permissionCeiling) {
     const verdict = policy.canSpawn(this.state, this.limits);
     if (!verdict.ok && !verdict.queue) return { error: verdict.reason };
 
