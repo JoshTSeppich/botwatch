@@ -25,6 +25,9 @@ export const ORCHESTRATOR_BRIEF = (maxWorkers) =>
     `Split the goal into independent tasks, at most ${maxWorkers} running at once, and start one worker per task with spawn_worker.`,
     'Then call wait_for with every worker id. When they are done, check each with worker_diff and read_worker.',
     'If a worker failed, you may message_worker it once with what to fix, then wait_for it again.',
+    "If a worker is asking (state 'asking', its question in the list), answer it with message_worker if the goal settles it.",
+    'If it does not, call ask_human with the question, the worker id, why you are passing it up, and the answer you would suggest.',
+    'ask_human returns the user\'s answer: send it to that worker with message_worker, then wait_for again. The other workers carry on meanwhile.',
     'You cannot edit files, run commands or merge. The user reviews every branch in the BotWatch pill and merges from there.',
     'Finish with one short line per worker saying what it did.',
     '',
@@ -128,6 +131,11 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     }
   }
 
+  function answer(text) {
+    if (!live) return { error: 'no run' };
+    return live.run.answer(text);
+  }
+
   function stop() {
     if (!live) return;
     live.run.stop();
@@ -157,7 +165,7 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     return live ? runView(live, now) : null;
   }
 
-  return { start, current, review, merge, stop, close, view };
+  return { start, current, review, merge, answer, stop, close, view };
 }
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
@@ -176,7 +184,9 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     progress: TERMINAL.has(w.state) ? 1 : 0.5,
     snapshot: w.snapshot ?? null,
     test: w.test ?? null,
+    question: w.question ?? null,
   }));
+  const q = run.pendingQuestion;
   const done = workers.filter((w) => TERMINAL.has(w.state)).length;
   // One finished, snapshotted, tested worker is enough to open the review:
   // merging is per branch.
@@ -193,9 +203,13 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     testCommand: run.testCommand,
     stopped: run.stopped,
     orchestrator: {
-      state: orchestrator.state === 'running' ? 'working' : orchestrator.state,
-      summary: orchestrator.summary ?? 'planning the work',
+      state: q ? 'waiting' : orchestrator.state === 'running' ? 'working' : orchestrator.state,
+      summary: q ? `Needs your answer: ${q.worker ?? 'a worker'} asks` : orchestrator.summary ?? 'planning the work',
     },
+    // Plain data: the promise machinery stays in pilld.
+    question: q
+      ? { question: q.question, worker: q.worker, reason: q.reason, suggestion: q.suggestion, options: q.options, at: q.at }
+      : null,
     workers,
     activeWorkers: workers.filter((w) => w.state === 'running').length,
     sentence: ready

@@ -57,6 +57,13 @@ export function createOrchestrate({ dock, host, statusEl }) {
   if (!api) return { update() {}, open() {} };
 
   const runEl = el('div', 'run-slot');
+  // The tree is rebuilt as the run changes; the question card is not, so a
+  // reply half-typed survives every redraw.
+  const treeEl = el('div');
+  const questionEl = el('div', 'question');
+  questionEl.hidden = true;
+  runEl.append(treeEl, questionEl);
+  let asked = null;
   const panel = el('div', 'panel');
   panel.hidden = true;
   dock.prepend(runEl);
@@ -296,7 +303,9 @@ export function createOrchestrate({ dock, host, statusEl }) {
   function pillModel(run) {
     const aggregate = run.workers.some((w) => w.state === 'errored')
       ? 'errored'
-      : run.ready
+      : run.question
+        ? 'waiting'
+        : run.ready
         ? 'done'
         : 'working';
     return {
@@ -310,7 +319,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
       orchestrator: { state: run.orchestrator.state, summary: run.orchestrator.summary },
       workers: run.workers.map((w) => ({
         ...w,
-        summary: w.test?.running ? 'running the tests' : w.summary,
+        summary: w.question ? `Asks: ${w.question}` : w.test?.running ? 'running the tests' : w.summary,
         time: abbrevTokens(w.tokens),
       })),
       budget: run.budget,
@@ -322,8 +331,9 @@ export function createOrchestrate({ dock, host, statusEl }) {
     lastRun = run;
     const active = Boolean(run && !run.closed);
     statusEl.style.display = active ? 'none' : '';
+    showQuestion(active ? run.question : null);
     if (!active) {
-      runEl.textContent = '';
+      treeEl.textContent = '';
       drawn = '';
       return;
     }
@@ -332,12 +342,12 @@ export function createOrchestrate({ dock, host, statusEl }) {
     // what the tree says is a reason to rebuild it.
     const signature = JSON.stringify([{ ...model, time: null }, run.ready, run.stopped, run.merges.length]);
     if (signature === drawn || pressed) {
-      const clock = runEl.querySelector('.hdr .eta');
+      const clock = treeEl.querySelector('.hdr .eta');
       if (clock && clock.textContent !== model.time) clock.textContent = model.time;
       return;
     }
     drawn = signature;
-    runEl.textContent = '';
+    treeEl.textContent = '';
 
     const pill = orchestratorPill(model);
     // The footer the view draws is generic; these are the actions this run has.
@@ -349,7 +359,50 @@ export function createOrchestrate({ dock, host, statusEl }) {
     const review = button(run.ready ? 'Review and merge' : 'Review', 'btn--accent', openReview);
     review.disabled = !run.reviewable;
     footer.append(review);
-    runEl.append(pill);
+    treeEl.append(pill);
+  }
+
+  // A worker's question, passed up by the orchestrator with its reason and
+  // what it would suggest. Chips fill the reply; Send is the answer.
+  function showQuestion(q) {
+    const key = q ? `${q.at}:${q.question}` : null;
+    if (key === asked) return;
+    asked = key;
+    questionEl.textContent = '';
+    questionEl.hidden = !q;
+    if (!q) {
+      if (!panelKind) host.keyboard?.(false);
+      return;
+    }
+    const head = el('div', 'question__head');
+    head.append(el('span', 'badge is-waiting', '?'), el('span', 'question__who', `${q.worker ?? 'A worker'} asks`));
+    questionEl.append(head, el('div', 'question__text', q.question));
+    if (q.reason) questionEl.append(el('div', 'question__meta', `Orchestrator: ${q.reason}`));
+    if (q.suggestion) questionEl.append(el('div', 'question__meta', `Suggests: ${q.suggestion}`));
+
+    const reply = el('input', 'setup__repo question__reply');
+    reply.placeholder = 'Your answer';
+    reply.addEventListener('focus', () => host.keyboard?.(true));
+    const chipRow = el('div', 'chips');
+    const choices = [...q.options];
+    if (q.suggestion && !choices.includes(q.suggestion)) choices.unshift(q.suggestion);
+    for (const option of choices) chipRow.append(button(option, 'chip-btn question__chip', () => (reply.value = option)));
+    const status = el('div', 'panel__error');
+    const send = button('Send', 'btn--accent', async () => {
+      if (!reply.value.trim()) return;
+      send.disabled = true;
+      const outcome = await api.answer(reply.value.trim());
+      if (outcome?.error) {
+        status.textContent = outcome.error;
+        send.disabled = false;
+      }
+    });
+    reply.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') send.click();
+    });
+    const row = el('div', 'panel__actions');
+    row.append(reply, send);
+    questionEl.append(chipRow, row, status);
   }
 
   // Stop is destructive, so it needs a 600ms hold; a click does nothing.

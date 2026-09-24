@@ -151,3 +151,44 @@ test('the review opens once one worker is ready, while others still run', () => 
   assert.equal(view.ready, false, 'not everything is finished');
   dispose(run);
 });
+
+test('a worker whose turn ends on QUESTION: is asking, not done', async () => {
+  const { questionIn } = await import('../electron/orchestrator/worker.js');
+  assert.equal(questionIn('I looked at it.\nQUESTION: Formal or casual greeting?'), 'Formal or casual greeting?');
+  assert.equal(questionIn('Done. No questions.'), null);
+});
+
+test('ask_human waits for the answer from the pill, and wait_for returns on a question', async () => {
+  const { waitFor } = await import('../electron/orchestrator/tools.js');
+  const run = fakeRun();
+  run.workers.push({ id: 'w1', state: 'running' }, { id: 'w2', state: 'running' });
+  const waiting = waitFor(run, ['w1', 'w2'], 'done');
+  run.workers[1].state = 'asking';
+  run.emit('change', run);
+  const listed = await waiting;
+  assert.equal(listed.find((w) => w.id === 'w2').state, 'asking', 'returned while w1 was still running');
+  assert.equal(listed.find((w) => w.id === 'w1').state, 'running');
+
+  let returned = null;
+  const asked = call(run, 'ask_human', { question: 'Formal?', worker: 'w2', reason: 'taste', suggestion: 'casual', options: ['formal', 'casual'] })
+    .then((r) => (returned = r));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(returned, null, 'still waiting for the user');
+  const view = runView({ run, orchestrator: { state: 'running' }, startedAt: 0, closed: false }, 0);
+  assert.deepEqual(view.question, { question: 'Formal?', worker: 'w2', reason: 'taste', suggestion: 'casual', options: ['formal', 'casual'], at: view.question.at });
+  assert.equal(view.orchestrator.state, 'waiting');
+
+  assert.deepEqual(run.answer('casual'), { answered: true });
+  await asked;
+  assert.deepEqual(returned, { answer: 'casual' });
+  assert.equal(run.pendingQuestion, null);
+  dispose(run);
+});
+
+test('stopping the run releases a question nobody will answer', async () => {
+  const run = fakeRun();
+  const asked = run.ask({ question: 'q' });
+  run.stop();
+  assert.deepEqual(await asked, { error: 'the run was stopped' });
+  dispose(run);
+});

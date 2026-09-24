@@ -14,7 +14,11 @@ export const TOOLS = [
   ['message_worker', 'Send a message to a running worker.', { id: 'string', text: 'string' }],
   ['worker_diff', 'Lines added and removed on a worker branch.', { id: 'string' }],
   ['stop_worker', 'Stop a worker.', { id: 'string' }],
-  ['ask_human', 'Put a question to the user through the pill.', { question: 'string', options: 'array' }],
+  [
+    'ask_human',
+    "Pass a worker's question up to the user. Waits for their answer and returns it. Give your reason for not answering it yourself, and your suggested answer.",
+    { question: 'string', worker: 'string', reason: 'string', suggestion: 'string', options: 'array' },
+  ],
   ['merge_worktrees', 'Merge worker branches. Only the user can, by clicking Merge in the pill.', { order: 'array' }],
 ];
 
@@ -40,7 +44,15 @@ export async function call(run, name, args = {}) {
     if (!worker) return { error: 'no such worker' };
     return worktrees.diff(worker.cwd, worker.base ?? 'main');
   }
-  if (name === 'ask_human') return run.ask(args.question, args.options ?? []);
+  if (name === 'ask_human') {
+    return run.ask({
+      question: args.question,
+      worker: args.worker ?? null,
+      reason: args.reason ?? '',
+      suggestion: args.suggestion ?? '',
+      options: Array.isArray(args.options) ? args.options.map(String) : [],
+    });
+  }
   if (name === 'wait_for') return waitFor(run, args.ids ?? [], args.until ?? 'done');
   if (name === 'merge_worktrees') {
     // Never merges, even after the click: merging is the pill's job, done with
@@ -56,7 +68,11 @@ export async function call(run, name, args = {}) {
 
 export function waitFor(run, ids, until) {
   return new Promise((resolve) => {
+    // Returns when every worker is as far as it can go on its own — or the
+    // moment any one of them asks a question, so the question is not left
+    // waiting on the slowest worker.
     const settled = () =>
+      ids.some((id) => run.find(id)?.state === 'asking') ||
       ids.every((id) => {
         const worker = run.find(id);
         return !worker || worker.state === until || ['done', 'errored', 'stopped'].includes(worker.state);

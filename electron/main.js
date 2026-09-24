@@ -177,6 +177,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('orch:start', (_event, config) => pilot.start(config));
   ipcMain.handle('orch:review', () => pilot.review());
   ipcMain.handle('orch:merge', (_event, selection) => pilot.merge(selection));
+  ipcMain.handle('orch:answer', (_event, text) => pilot.answer(text));
   ipcMain.handle('orch:stop', () => pilot.stop());
   ipcMain.handle('orch:close', () => pilot.close());
 

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('pillHost', {
     start: (config) => ipcRenderer.invoke('orch:start', config),
     review: () => ipcRenderer.invoke('orch:review'),
     merge: (selection) => ipcRenderer.invoke('orch:merge', selection),
+    answer: (text) => ipcRenderer.invoke('orch:answer', text),
     stop: () => ipcRenderer.invoke('orch:stop'),
     close: () => ipcRenderer.invoke('orch:close'),
     onOpen: (fn) => ipcRenderer.on('orch:open', () => fn()),

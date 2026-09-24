@@ -1230,3 +1230,64 @@
   gap: 8px;
   margin-top: 8px;
 }
+
+/* A question passed up: the needs-you card under the tree. */
+.run-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.question {
+  width: 544px;
+  box-sizing: border-box;
+  padding: 10px 13px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-waiting);
+  border-left: 3px solid var(--waiting);
+  background: var(--pill-bg-open);
+  box-shadow: var(--shadow-open);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.question[hidden] {
+  display: none;
+}
+
+.question__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--wait-ink-2);
+  font-weight: 600;
+}
+
+.question__text {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.question__meta {
+  color: var(--ink-2);
+  margin-bottom: 2px;
+}
+
+.question .chips {
+  margin-top: 8px;
+}
+
+.question__chip {
+  border-color: color-mix(in srgb, var(--waiting) 45%, transparent);
+  background: var(--wait-wash);
+}
+
+.question__reply {
+  flex: 1;
+}
+
+.review__foot .btn {
+  flex: none;
+  white-space: nowrap;
+}

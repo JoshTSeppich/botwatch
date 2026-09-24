@@ -72,9 +72,17 @@ export const WORKER_BRIEF = [
   'You cannot commit: the repository is read-only to you and the attempt will fail.',
   'BotWatch snapshots your working tree to your branch when you finish. Just edit files.',
   'git status and git diff are fine, and are how you check your own work.',
+  'If you need a decision you cannot make from the task, do not guess: end your turn with one line',
+  "starting 'QUESTION:' followed by the question, and wait. The answer will come as your next message.",
   '',
   'Your task:',
 ].join('\n');
+
+// The worker's own words after "QUESTION:", or null.
+export function questionIn(text) {
+  const match = /^\s*QUESTION:\s*(.+)$/im.exec(String(text ?? ''));
+  return match ? match[1].trim() : null;
+}
 
 export function workerArgs({ model, permissionMode, protect = [] }) {
   return [
@@ -167,7 +175,10 @@ export class Worker extends EventEmitter {
       this.emit('limits', this, this.limits);
     }
     if (event.kind === 'finished') {
-      this.state = event.error ? 'errored' : 'done';
+      // A turn that ends on a question is not finished work: nothing is
+      // snapshotted, it cannot merge, and the orchestrator is told.
+      this.question = event.error ? null : questionIn(event.result);
+      this.state = event.error ? 'errored' : this.question ? 'asking' : 'done';
       // The process stays alive and answerable after its turn, which is how
       // message_worker works at all. It also means a finished worker is a live
       // `claude` holding memory until something releases it.
@@ -181,8 +192,13 @@ export class Worker extends EventEmitter {
   message(text) {
     if (!this.child?.stdin.writable) return false;
     // Talking to a finished worker puts it back in use, so it is no longer a
-    // candidate for reaping.
+    // candidate for reaping — and an answered question is work again.
     this.doneAt = null;
+    if (this.state === 'asking' || this.state === 'done') {
+      this.state = 'running';
+      this.question = null;
+      this.emit('change', this);
+    }
     const line = JSON.stringify({
       type: 'user',
       message: { role: 'user', content: [{ type: 'text', text }] },

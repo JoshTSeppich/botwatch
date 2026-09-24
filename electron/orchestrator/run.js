@@ -320,6 +320,7 @@ export class Run extends EventEmitter {
       model: w.model,
       tokens: w.tokens,
       summary: w.summary ?? null,
+      question: w.question ?? null,
       sessionId: w.sessionId,
     }));
   }
@@ -328,16 +329,27 @@ export class Run extends EventEmitter {
     return this.workers.find((w) => w.id === id) ?? null;
   }
 
-  ask(question, options = []) {
-    this.pendingQuestion = { question, options, at: Date.now() };
+  // A question passed up to the user. Resolves with their answer, which is
+  // what the orchestrator's ask_human call returns. One at a time: a second
+  // question waits for the first to be answered.
+  async ask({ question, worker = null, reason = '', suggestion = '', options = [] }) {
+    while (this.pendingQuestion) await this.pendingQuestion.answered;
+    let settle;
+    const answered = new Promise((resolve) => {
+      settle = resolve;
+    });
+    this.pendingQuestion = { question, worker, reason, suggestion, options, at: Date.now(), answered, settle };
     this.emit('change', this);
-    return this.pendingQuestion;
+    return answered;
   }
 
   answer(text) {
+    const pending = this.pendingQuestion;
+    if (!pending) return { error: 'there is no question waiting' };
     this.pendingQuestion = null;
+    pending.settle({ answer: String(text) });
     this.emit('change', this);
-    return text;
+    return { answered: true };
   }
 
   // A worker that finished and has not been spoken to since is just a live
@@ -361,6 +373,11 @@ export class Run extends EventEmitter {
   }
 
   stop() {
+    // Nobody is going to answer now; don't leave ask_human hanging.
+    if (this.pendingQuestion) {
+      this.pendingQuestion.settle({ error: 'the run was stopped' });
+      this.pendingQuestion = null;
+    }
     this.stopped = true;
     this.pauseAll('stopped');
   }

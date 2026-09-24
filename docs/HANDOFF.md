@@ -153,7 +153,18 @@ None open. Don't reopen these without a new reason.
 5. **Recovery**, as integration scripts in `tools/`: app killed mid-run, worker crashed, stale
    session file, orphaned worktree and branch, merge interrupted halfway.
 
-Then question-passed-up, the worker log panel, and motion — in that order, last.
+**Question passed up: done.** A worker that needs a decision ends its turn with `QUESTION: …`
+and becomes `asking` (accent `?`, not snapshotted, not mergeable); `wait_for` returns the moment
+any worker asks; the orchestrator either answers or calls `ask_human` with the question, its reason
+and a suggestion, which blocks until the user replies from the pill's question card; the answer
+goes back with `message_worker`. Acceptance demo, packaged app, acceptEdits, three haiku workers:
+w2 asked formal-or-casual, the card showed reason and suggestion (casual), the answer "formal" came
+back as `Good day, ${name}.` five seconds later; w3's `.env` and `dist/` were flagged and Merge
+refused naming both; acknowledged, merged; w1 merged separately; w2 then conflicted with w1 and the
+app showed "conflicts with what is already on your branch in src/greet.js, test/greet.test.js.
+Nothing was changed."
+
+Then the worker log panel, and motion — in that order, last.
 
 ## How the code is arranged
 
