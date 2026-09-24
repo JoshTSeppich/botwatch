@@ -287,6 +287,7 @@ test('every spawned session is sandboxed with no way to fall back out of it', ()
   assert.equal(s.sandbox.enabled, true);
   assert.equal(s.sandbox.allowUnsandboxedCommands, false, 'the escape hatch must be shut');
   assert.equal(s.sandbox.failIfUnavailable, true, 'no silent unsandboxed running');
+  assert.equal(s.sandbox.autoAllowBashIfSandboxed, true, 'sandboxed commands run without a prompt nobody can answer');
 });
 
 test('workers cannot reach a git remote through the sandbox network allowlist', () => {

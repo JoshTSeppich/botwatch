@@ -54,6 +54,13 @@ export function guardSettings({ protect = [], domains = WORKER_DOMAINS } = {}) {
       // If the sandbox cannot start, stop. Running unsandboxed with a warning
       // is the wrong default for a session nobody is watching.
       failIfUnavailable: true,
+      // Sandboxed Bash runs without asking, in any permission mode but plan.
+      // It is what lets an acceptEdits worker run its own tests headless,
+      // where no one can approve a prompt — without handing it bypass. The
+      // default is already true; stated here so a changed default can't
+      // quietly break every worker. Measured on 2.1.281: `npm test`, git and
+      // pipes run unprompted; `node -e "<code>"` still asks, flag or not.
+      autoAllowBashIfSandboxed: true,
       network: { allowedDomains: domains },
     },
     ...(deny.length ? { permissions: { deny } } : {}),
