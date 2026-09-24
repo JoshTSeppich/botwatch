@@ -700,26 +700,46 @@
    colour: a worker asking the orchestrator is accent, not amber, because it is
    not asking you. */
 
+/* :root is the WHITE pill (the surface used on a dark OS), so v3's accent and
+   its queued segment need the dark values here. The spec's #8B93FF and its
+   white-at-14% segment were drawn for a dark shell: on white the segment is
+   invisible and the rail is barely there. */
 :root {
+  --accent: #4f56c9;
+  --accent-hover: #3d43ad;
+  --accent-ink: #2f3480;
+  --accent-rail: rgba(79, 86, 201, 0.45);
+  --accent-wash: rgba(79, 86, 201, 0.08);
+  --row-h-worker: 56px;
+  --seg-w: 6px;
+  --seg-h: 10px;
+  --seg-queued: rgba(0, 0, 0, 0.16);
+  --seg-running: color-mix(in srgb, var(--working) 45%, transparent);
+  --seg-asking: color-mix(in srgb, var(--waiting) 65%, transparent);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --accent: #8b93ff;
+    --accent-hover: #aeb4ff;
+    --accent-ink: #c8ccff;
+    --accent-rail: rgba(139, 147, 255, 0.35);
+    --accent-wash: rgba(139, 147, 255, 0.07);
+    --seg-queued: rgba(255, 255, 255, 0.14);
+    --seg-running: color-mix(in srgb, var(--working) 40%, transparent);
+    --seg-asking: color-mix(in srgb, var(--waiting) 60%, transparent);
+  }
+}
+
+:root[data-theme='light'] {
   --accent: #8b93ff;
   --accent-hover: #aeb4ff;
   --accent-ink: #c8ccff;
   --accent-rail: rgba(139, 147, 255, 0.35);
   --accent-wash: rgba(139, 147, 255, 0.07);
-  --row-h-worker: 56px;
-  --seg-w: 6px;
-  --seg-h: 10px;
   --seg-queued: rgba(255, 255, 255, 0.14);
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) {
-    --seg-queued: rgba(255, 255, 255, 0.14);
-  }
-}
-
-:root[data-theme='light'] {
-  --seg-queued: rgba(0, 0, 0, 0.14);
+  --seg-running: color-mix(in srgb, var(--working) 40%, transparent);
+  --seg-asking: color-mix(in srgb, var(--waiting) 60%, transparent);
 }
 
 /* Task strip: one segment per task, up to eight. */
@@ -744,11 +764,11 @@
 }
 
 .strip i.is-running {
-  background: color-mix(in srgb, var(--working) 40%, transparent);
+  background: var(--seg-running);
 }
 
 .strip i.is-asking {
-  background: color-mix(in srgb, var(--waiting) 60%, transparent);
+  background: var(--seg-asking);
 }
 
 /* Beyond eight tasks a segment per task stops meaning anything. */
@@ -813,16 +833,18 @@
   padding-left: 10px;
 }
 
+/* "Workers are indented 14px." The orchestrator's content starts at 13px
+   (3px rule + 10px padding), so a worker's starts at 27. */
 .row--worker {
   height: var(--row-h-worker);
   position: relative;
-  padding-left: 30px;
+  padding-left: 27px;
 }
 
 .row--worker::before {
   content: '';
   position: absolute;
-  left: 17px;
+  left: 16px;
   top: 0;
   bottom: 0;
   width: 1px;
@@ -836,7 +858,7 @@
 .row--worker::after {
   content: '';
   position: absolute;
-  left: 17px;
+  left: 16px;
   top: 50%;
   width: 7px;
   height: 1px;
@@ -846,6 +868,11 @@
 .row--queued .row__prose,
 .row--queued .row__meta {
   opacity: 0.45;
+}
+
+.dot--row.is-idle {
+  background: var(--idle);
+  box-shadow: 0 0 0 1px var(--rule);
 }
 
 /* A worker's progress, under its meta line. */
