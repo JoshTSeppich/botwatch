@@ -105,6 +105,22 @@ The second pill is the token budget: this week against your plan limit, this ses
 rate, and when the week resets. Set `PILL_WEEKLY_TOKEN_LIMIT` to your plan's ceiling or the
 percentage is measured against a guess of 40M.
 
+## Orchestrating
+
+`⌥⌘O` opens the setup panel: a goal, a repo, a model, how many workers at once, a token budget,
+what workers may do (never more than your own sessions), and the test command. Start hands the
+goal to an orchestrator session, which splits it into tasks and starts a worker per task, each in
+its own git worktree on a `bw/` branch. The pill shows the run as a tree while it works.
+
+When a worker finishes, BotWatch commits its worktree to its branch and runs your tests against
+that commit, sandboxed: no network, no writes outside the worktree. **Review and merge** then
+shows, per worker: the branch, the snapshot commit and when it was taken, the test command and its
+result, and the files, with edits and new files listed separately. Files that look like they
+shouldn't be merged — a `.env`, build output, keys, anything that smells of a secret — are flagged,
+and Merge refuses until you tick each one by name. What merges is the exact commit you reviewed;
+if a worker ran again since, Merge refuses and asks you to look again. Each branch lands as its own
+`--no-ff` merge naming the worker and the commit. Nothing is ever pushed.
+
 ## What stops a worker touching your work
 
 Two different problems, and conflating them is a mistake I made twice. **Refs and history** are

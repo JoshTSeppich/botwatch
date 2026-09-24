@@ -11,7 +11,8 @@ measured against the real CLI; where something is unverified it says so.
 | v1 data source | **hooks** — plugin → `bw-hook` → `~/.claude/botwatch/pilld.sock` → `electron/registry.js`. Transcripts supply model and tokens, and state only until a session's first hook |
 | `bw-hook` (Rust, fire-and-forget) | **shipped in the app** as one universal binary inside `Contents/Resources/claude-plugin`; release workflow builds and verifies both slices |
 | v3 orchestrator core (policy, budget, worktrees, worker, run, MCP, refguard, review, allowance) | **built and exercised against the real CLI** |
-| v3 UI | **collapsed line + expanded tree only** |
+| v3 run hosting | **the run lives in pilld** (`orchestrator/pilot.js`); `mcp.js` only relays over `~/.claude/botwatch/control.sock` (0600, per-run token) |
+| v3 UI | **setup panel (⌥⌘O), live tree, review panel with merge** — proven end to end on the packaged app |
 | v2 (reply and approve) | **not started** |
 
 99 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
@@ -116,10 +117,25 @@ None open. Don't reopen these without a new reason.
      115ms. It now has one 25ms delivery deadline. Worst case measured: 33.7ms native, 48.2ms for
      the x86_64 slice under Rosetta (no Intel Mac to measure natively). First exec of a newly
      installed binary costs ~270ms (native) / ~450ms (Rosetta) in the OS, before `main`.
-3. **The loop end to end through the UI**: setup panel (`⌥⌘O`), merge review panel (edits and new
-   files separately, flags, an acknowledge step, per-worker provenance: id, branch, snapshot SHA,
-   test command and result, timestamp). Prove it on a scratch repo with a worker that leaves a
-   `.env` and build output behind.
+3. **The loop end to end through the UI.** *(Done.)* Proven on the packaged app, driven through
+   its real DOM over DevTools, against a scratch repo: ⌥⌘O → setup → Start → orchestrator spawns two
+   haiku workers → each is snapshotted and its tests run → Review → Merge refused naming both
+   flagged files → refused again with only `.env` ticked → both ticked → two `--no-ff` merges, each
+   naming worker and SHA → `main`'s tests pass → Close run removes the ref hook. Found on the way:
+   - **The guard hook never ran in a packaged app.** It was `node <path inside app.asar>`. The
+     orchestrator scripts are now `asarUnpack`ed and run on the app's own binary
+     (`ELECTRON_RUN_AS_NODE`), not a `node` that may not be on PATH (`orchestrator/runtime.js`).
+   - **Workers defaulted to `default` mode**, which in headless `-p` denies every edit. They now
+     get the mode chosen in setup unless the orchestrator asks for less.
+   - `review()` filed new files as edits once snapshotted; merge had no way to name what was
+     reviewed. Merge now takes `{ reviewed: [{branch, sha}], acknowledged: ['w1:.env'] }`, merges
+     that SHA only, refuses a branch that moved, aborts a conflict, refuses a checkout mid-merge.
+   - Tests run under a Seatbelt profile (`orchestrator/testrun.js`): no network past loopback,
+     writes only in the worktree and temp. Worker-written tests never run with more than the worker.
+   - The CLI itself creates an empty `.claude/.cc-writes/` in the **main checkout** when a worker
+     starts. Not a tool call, so the deny rules don't see it; empty, so git never merges it.
+   - The run tree must not rebuild under a click; it now rebuilds only when its content changes.
+   - Not built: "Review in terminal", Pause/Resume (only Stop), the allowance line in setup.
 4. **`docs/THREAT-MODEL.md`** separating: the checkout's files; refs and history; secret
    exfiltration; bad generated code. For each: what BotWatch does, what it relies on, what's open.
 5. **Recovery**, as integration scripts in `tools/`: app killed mid-run, worker crashed, stale
