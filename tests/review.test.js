@@ -267,3 +267,25 @@ test('a later merge that conflicts with one that landed is aborted cleanly', asy
   assert.equal(existsSync(join(repo, '.git', 'MERGE_HEAD')), false);
   assert.equal(readFileSync(join(repo, 'app.js'), 'utf8'), 'export const a = "w1";\n');
 });
+
+test("after one worker's branch merges, another's review still shows only its own changes", async () => {
+  const f = fixture();
+  const w2 = join(f.root, 'w2');
+  git(f.repo, 'worktree', 'add', '-q', '-b', 'bw/w2-task', w2);
+  writeFileSync(join(f.wt, 'one.js'), '1\n');
+  writeFileSync(join(w2, 'two.js'), '2\n');
+  const run = runWith(f);
+  run.workers.push({ id: 'w2', task: 't', branch: 'bw/w2-task', base: 'main', cwd: w2, state: 'done', doneAt: 1 });
+  await run.snapshot(run.workers[0]);
+  await run.snapshot(run.workers[1]);
+  const before = await review(w2, 'main');
+  run.userApprovedMerge = true;
+  const [r1] = (await run.reviewAll()).filter((r) => r.id === 'w1');
+  assert.equal((await run.merge({ reviewed: [{ branch: r1.branch, sha: r1.sha }] })).error, undefined);
+
+  const after = await review(w2, 'main');
+  assert.deepEqual(after, before, 'main moving on does not change what w2 brings');
+  assert.deepEqual(after.added.map((e) => e.file), ['two.js']);
+  assert.equal([...after.edits, ...after.added].some((e) => e.file === 'one.js'), false, "w1's file is not shown as removed by w2");
+});
+

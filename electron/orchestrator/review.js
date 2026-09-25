@@ -36,12 +36,22 @@ const SECRET_CONTENT = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'private key block'],
 ];
 
+// Where the branch left its base. Diffing against the base's tip instead
+// shows, as this worker "undoing" them, every change merged to the base since
+// — the first merge of a run made every other worker's review wrong.
+export async function forkPoint(worktreePath, base = 'main', head = 'HEAD') {
+  return execFile('git', ['-C', worktreePath, 'merge-base', base, head])
+    .then(({ stdout }) => stdout.trim())
+    .catch(() => base);
+}
+
 export async function review(worktreePath, base = 'main') {
-  // Against the base branch, not the last commit: once pilld snapshots a
+  // Against the fork point, not the last commit: once pilld snapshots a
   // worker, its new files are committed, and `ls-files --others` alone would
   // file every one of them under edits. The status letter is what says new.
-  const counts = await numstat(worktreePath, base);
-  const status = await nameStatus(worktreePath, base);
+  const from = await forkPoint(worktreePath, base);
+  const counts = await numstat(worktreePath, from);
+  const status = await nameStatus(worktreePath, from);
   const edits = [];
   const added = [];
   for (const [file, letter] of status) {
