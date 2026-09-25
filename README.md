@@ -183,6 +183,14 @@ why `worker_diff` reports uncommitted work rather than committed history.
 **Separate clones would not fix this.** They fix refs and history. A worker in a separate clone can
 still write to your checkout by absolute path, with no git involved.
 
+### If BotWatch dies mid-run
+
+Quitting BotWatch stops a run cleanly. If it's killed or crashes instead, the next launch finds
+the run it left behind and cleans up: it stops the sessions that were still running, takes its ref
+hook back out of your repo (a hook of yours stays as it is), and keeps every branch, because the
+branches are the work. The setup panel says what it recovered. A worker that crashes mid-task
+has its partial work saved to its branch for you to look at, but it can't be merged.
+
 ### The holes, in the order I'd expect them to be hit
 
 - **Whatever a worker reads goes to Anthropic's API** as part of its conversation, like any Claude

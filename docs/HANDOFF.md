@@ -183,8 +183,25 @@ None open. Don't reopen these without a new reason.
    - **Claude Code refuses a standalone `sleep`** in a worker, even in the foreground.
 4. *(Done: `docs/THREAT-MODEL.md`. The read gap it found is narrowed: secret locations denied at the Read tool and the Bash sandbox, registries off unless a run allows installs, all measured. Still a denylist, not confinement.)* **`docs/THREAT-MODEL.md`** separating: the checkout's files; refs and history; secret
    exfiltration; bad generated code. For each: what BotWatch does, what it relies on, what's open.
-5. **Recovery**, as integration scripts in `tools/`: app killed mid-run, worker crashed, stale
-   session file, orphaned worktree and branch, merge interrupted halfway.
+5. **Recovery.** *(Done: `tools/it-recovery.mjs`, all checks passing on 2026-09-24, plus
+   `tests/recovery.test.js`.)* Every run writes `runs/<id>/run.json` (owner pid, repo, each
+   session's pid and branch), and `recover()` runs at launch for runs whose BotWatch is gone:
+   - **pilld killed mid-run**: the orchestrator and both workers were orphaned, and the ref hook
+     was left in the repo. `recover()` stopped all three (checking each pid is still `claude`
+     first), removed the hook, and kept the branches. It runs once per record.
+   - **Orphaned worktree**: a worktree folder deleted by hand is pruned, but only if every
+     prunable worktree is BotWatch's. `git worktree prune` has no per-path form, and the user's
+     worktree on an unplugged drive must survive it.
+   - **Worker crashed** (kill -9 mid-turn): now snapshotted at exit, so its partial work is
+     reviewable. It can't merge, because it didn't finish.
+   - **Stale session file**: the pid is alive but belongs to another process. It's ignored now,
+     by comparing the file's `procStart` with `ps -o lstart` in UTC.
+   - **Merge interrupted**: a leftover `index.lock` is refused with a message naming the file.
+     MERGE_HEAD was already refused.
+   Found on the way: `refguard.uninstall()` deleted any `reference-transaction` hook, the user's
+   included. It now removes only BotWatch's.
+   Not covered: an owner pid reused by another live process makes `recover()` skip that run until
+   the pid is free. The record doesn't store the owner's start time yet.
 
 **Question passed up: done.** A worker that needs a decision ends its turn with `QUESTION: …`
 and becomes `asking` (accent `?`, not snapshotted, not mergeable); `wait_for` returns the moment
@@ -210,4 +227,5 @@ Anything that must be right is a pure function with a test: `stripPlan`, `badgeT
 `clampPermission`, `isRepoWrite`, `suspectByName`, `weeklyAllowance`, `snapshotMessage`.
 
 Integration scripts in `tools/` spend real tokens and need a logged-in CLI, so they are **not** in
-`npm test`: `smoke-worker`, `it-spawn`, `it-waitfor`, `it-message`, `it-diff`, `it-mcp`, `it-reap`.
+`npm test`: `smoke-worker`, `it-spawn`, `it-waitfor`, `it-message`, `it-diff`, `it-mcp`, `it-reap`,
+`it-recovery` (with its host, `it-recovery-host`).
