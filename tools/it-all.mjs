@@ -27,6 +27,8 @@ const SCRIPTS = [
   ['it-snapshot', false],
   ['it-escape', false],
   ['it-readcap', false],
+  ['it-fleet', false],
+  ['it-fleet-attacks', false],
 ];
 
 function scratchRepo() {
