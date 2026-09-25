@@ -17,7 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import * as refguard from './refguard.js';
-import { review } from './review.js';
+import { forkPoint, review } from './review.js';
 import { runTests } from './testrun.js';
 import { guardSettings } from './settings.js';
 import * as worktrees from './worktrees.js';
@@ -263,6 +263,31 @@ export class Run extends EventEmitter {
     this.merges.push(...merged);
     this.emit('change', this);
     return { merged };
+  }
+
+  // The shell command that shows exactly what Merge would bring in for one
+  // worker: its reviewed commit against where its branch left the base. Only
+  // for this run's branches, and only a commit on that branch. External diff
+  // drivers and textconv are off, so nothing a worker committed — a
+  // .gitattributes naming a driver — can make git run a program.
+  async diffCommand(branch, sha, quote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`) {
+    const worker = this.workers.find((w) => w.branch === branch);
+    if (!worker || !branch?.startsWith('bw/')) return { error: `${branch} is not a branch of this run` };
+    if (!/^[0-9a-f]{7,40}$/.test(String(sha))) return { error: 'not a commit' };
+    const onBranch = await execFile('git', ['-C', this.repo, 'merge-base', '--is-ancestor', sha, `refs/heads/${branch}`])
+      .then(() => true)
+      .catch(() => false);
+    if (!onBranch) return { error: `${sha.slice(0, 7)} is not on ${branch}` };
+    const from = await forkPoint(this.repo, worker.base ?? 'main', sha);
+    const safe = ['--no-ext-diff', '--no-textconv'];
+    const git = (...args) => ['git', ...args].map((a) => (/^[\w./=:-]+$/.test(a) ? a : quote(a))).join(' ');
+    const command = [
+      `cd ${quote(this.repo)}`,
+      git('--no-pager', 'log', '-1', '--format=%h %s (%an)', sha),
+      git('--no-pager', 'diff', ...safe, '--stat', from, sha),
+      git('diff', ...safe, from, sha),
+    ].join(' && ');
+    return { command, from, sha, worker: worker.id };
   }
 
   get budgetExhausted() {

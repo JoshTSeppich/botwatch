@@ -490,3 +490,7 @@ test("Claude's own credentials are hidden from the worker's Bash by the sandbox"
   const denied = guardSettings({}).sandbox.credentials.envVars;
   for (const name of AUTH_ENV) assert.ok(denied.some((d) => d.name === name && d.mode === 'deny'), name);
 });
+
+test('workers are told to keep shell commands plain, since loops and $(…) are refused headless', () => {
+  assert.match(WORKER_BRIEF, /loops and \$\(…\)/);
+});

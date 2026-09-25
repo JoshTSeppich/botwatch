@@ -169,6 +169,15 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     return outcome;
   }
 
+  // Review in terminal: the exact reviewed commit's diff, in Terminal.
+  async function reviewInTerminal(branch, sha, { open = openInTerminal } = {}) {
+    if (!live) return { error: 'no run' };
+    const built = await live.run.diffCommand(branch, sha, shellQuote);
+    if (built.error) return built;
+    await open(built.command);
+    return { ok: true, command: built.command };
+  }
+
   function answer(text) {
     if (!live) return { error: 'no run' };
     return live.run.answer(text);
@@ -204,7 +213,7 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     return live ? runView(live, now) : null;
   }
 
-  return { start, current, review, merge, answer, log, takeOver, stop, close, view };
+  return { start, current, review, merge, reviewInTerminal, answer, log, takeOver, stop, close, view };
 }
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);

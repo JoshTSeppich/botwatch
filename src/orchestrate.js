@@ -311,12 +311,25 @@ export function createOrchestrate({ dock, host, statusEl }) {
 
     const foot = el('div', 'review__foot');
     const result = el('div', 'panel__error');
+    // The changes themselves, not just their names: the reviewed commit's
+    // diff in a terminal, next to whatever Merge is offering.
+    const inTerminal = r.sha
+      ? button('Review in terminal', '', async () => {
+          const outcome = await api.reviewInTerminal(r.branch, r.sha);
+          if (outcome?.error) {
+            result.className = 'panel__error';
+            result.textContent = outcome.error;
+          }
+        })
+      : null;
     if (landed) {
       result.className = 'panel__ok';
       result.textContent = `merged @ ${landed.sha.slice(0, 7)} · ${time(landed.at)}`;
       foot.append(result);
+      if (inTerminal) foot.append(el('div', 'footer__spacer'), inTerminal);
     } else if (worker?.state !== 'done' || !r.snapshot || r.test?.running) {
       foot.append(el('div', 'review__none', `${r.id} is ${worker?.state ?? 'not ready'} — it can merge once it has finished and been tested`));
+      if (inTerminal) foot.append(el('div', 'footer__spacer'), inTerminal);
     } else {
       const merge = button(`Merge ${r.id}`, 'btn--accent', async () => {
         merge.disabled = true;
@@ -337,7 +350,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
         merge.remove();
       });
       merge.dataset.merge = r.id;
-      foot.append(result, el('div', 'footer__spacer'), merge);
+      foot.append(result, el('div', 'footer__spacer'), ...(inTerminal ? [inTerminal] : []), merge);
     }
     card.append(foot);
     return card;

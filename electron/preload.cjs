@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('pillHost', {
     chooseFolder: () => ipcRenderer.invoke('orch:chooseFolder'),
     review: () => ipcRenderer.invoke('orch:review'),
     merge: (selection) => ipcRenderer.invoke('orch:merge', selection),
+    reviewInTerminal: (branch, sha) => ipcRenderer.invoke('orch:reviewInTerminal', branch, sha),
     answer: (text) => ipcRenderer.invoke('orch:answer', text),
     log: (id, after) => ipcRenderer.invoke('orch:log', id, after),
     takeOver: (id) => ipcRenderer.invoke('orch:takeOver', id),

@@ -289,3 +289,33 @@ test("after one worker's branch merges, another's review still shows only its ow
   assert.equal([...after.edits, ...after.added].some((e) => e.file === 'one.js'), false, "w1's file is not shown as removed by w2");
 });
 
+test('Review in terminal shows exactly the reviewed commit, from where its branch left main', async () => {
+  const f = fixture();
+  const w2 = join(f.root, 'w2');
+  git(f.repo, 'worktree', 'add', '-q', '-b', 'bw/w2-task', w2);
+  writeFileSync(join(f.wt, 'one.js'), '1\n');
+  writeFileSync(join(w2, 'two.js'), 'export const two = 2;\n');
+  const run = runWith(f);
+  run.workers.push({ id: 'w2', task: 't', branch: 'bw/w2-task', base: 'main', cwd: w2, state: 'done', doneAt: 1 });
+  await run.snapshot(run.workers[0]);
+  await run.snapshot(run.workers[1]);
+  const reviews = await run.reviewAll();
+  run.userApprovedMerge = true;
+  const r1 = reviews.find((r) => r.id === 'w1');
+  await run.merge({ reviewed: [{ branch: r1.branch, sha: r1.sha }] });
+
+  const r2 = reviews.find((r) => r.id === 'w2');
+  const built = await run.diffCommand(r2.branch, r2.sha);
+  assert.equal(built.error, undefined, built.error);
+  assert.match(built.command, /--no-ext-diff --no-textconv/);
+  const { execSync } = await import('node:child_process');
+  const out = execSync(built.command, { shell: '/bin/sh', encoding: 'utf8', env: { ...process.env, GIT_PAGER: 'cat', PAGER: 'cat' } });
+  assert.match(out, /two\.js/);
+  assert.match(out, /\+export const two = 2;/);
+  assert.doesNotMatch(out, /one\.js/, "w1's merged change is not part of w2's diff");
+
+  assert.match((await run.diffCommand('main', r2.sha)).error, /not a branch of this run/);
+  assert.match((await run.diffCommand(r2.branch, r1.sha)).error, /is not on bw\/w2-task/);
+  assert.match((await run.diffCommand(r2.branch, '$(rm -rf ~)')).error, /not a commit/);
+  clearInterval(run.reaper);
+});

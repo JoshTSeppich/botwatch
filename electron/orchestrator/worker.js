@@ -73,6 +73,8 @@ export const WORKER_BRIEF = [
   'You cannot commit: the repository is read-only to you and the attempt will fail.',
   'BotWatch snapshots your working tree to your branch when you finish. Just edit files.',
   'git status and git diff are fine, and are how you check your own work.',
+  'Keep shell commands plain: single commands and pipes run without asking, but loops and $(…)',
+  'substitutions are refused here, because nobody is present to approve them.',
   'If you need a decision you cannot make from the task, do not guess: end your turn with one line',
   "starting 'QUESTION:' followed by the question, and wait. The answer will come as your next message.",
   '',
