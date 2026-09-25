@@ -220,6 +220,42 @@ brief is what makes the failure clear, not npm.
 - Merged code runs later with your full permissions: `npm install` lifecycle scripts, `.envrc`, and
   anything else your tools execute from the repo.
 
+## 5. v4: a fleet of orchestrators (on `feat/v4-core`, not released)
+
+A v4 fleet adds a hypervisor session and several orchestrators, each with its own workers. The
+models decide within limits; pilld holds the limits, in code (`electron/fleet/`). Each limit of
+the design's core rule, how it is held, and whether it is **prevented** (the action can't happen)
+or **detected** (it happens, is noticed, and the session is paused):
+
+| Limit | How | Prevented or detected | Evidence |
+| --- | --- | --- | --- |
+| Leases never exceed the global budget | `grantable()` refuses any grant or spawn that would push the leases plus the hypervisor's spending over it | **Prevented** (the grant) | `fleet.test.js` attacks; `it-fleet-attacks budget` |
+| A lease's tokens, and the global budget | counted per API message; a spent lease pauses its orchestrator and workers, a spent budget pauses everything | **Detected, then paused**: one step per running session over | the overrun figures in the design doc's rulings |
+| The session cap, across every level | one gate before anything starts: hypervisor, orchestrators and workers together | **Prevented** (a worker waits in the queue instead) | `fleet.test.js`; `it-fleet-attacks cap` |
+| Workers only after a claim | the gate refuses `spawn_worker` until the orchestrator's claim is granted | **Prevented** | `fleet.test.js` |
+| Another orchestrator's claim | Write/Edit/NotebookEdit deny rules for its globs, in the worker's settings at spawn; they bind the Bash sandbox too | **Prevented**, for claims granted before the worker started | `it-fleet-attacks claim` |
+| A worker's own claim, and claims made after it started | the enforcement hook (`enforce.mjs`) asks pilld on every Write/Edit, live | **Prevented** for Write/Edit | `fleet.test.js`; `it-fleet-attacks claim` |
+| The same, through Bash | a diff of the worktree after every tool call; a change outside the claim pauses the worker and is logged | **Detected, then paused**. The file exists until you review it, and a branch with it can't be queued | `it-fleet-attacks claim`: a real worker wrote `NOTES.md` by Bash, was caught and paused |
+| Merge into your branches, and push | no tool at any level merges or pushes; staging (`botwatch/staging-<fleet>`) is BotWatch's and is merged into your branch only on your click, at the exact commit built and tested, if the base hasn't moved | **Prevented** | `fleet-rules.test.js`; `it-fleet`; `it-fleet-attacks merge` |
+| Permission above the ceiling | every session is started with `clampPermission` to the ceiling | **Prevented** | `fleet.test.js`; `it-fleet-attacks permission` |
+| An expired lease, including after the hypervisor dies | leases expire on pilld's clock; expiry pauses the orchestrator and its workers; the gate, the tools and the enforcement hook refuse under it; with the hypervisor gone nothing new starts | **Prevented** from starting anything or writing; the turn in flight when it expires is spent (**detected**) | `fleet.test.js`; `it-fleet-attacks expiry` |
+| The hypervisor never reads worker transcripts | no tool returns one; its settings deny reading `~/.claude/projects` and the worktrees (Read tool and sandbox); it has no Bash, Write, Edit or subagents | **Prevented** | `fleet.test.js`; `it-fleet` (it used only BotWatch tools) |
+| The decision log | every answer with its level, its chain and the rule the model cited, verbatim, marked unverified | a record, not a limit: it never claims a rule was followed | `fleet.test.js` |
+
+**The enforcement hook fails closed.** It refuses when pilld is unreachable, when pilld doesn't
+answer within its own 2-second deadline (under Claude Code's 10-second hook timeout), and when it
+crashes (`… || exit 2`). Measured on the real CLI: with nobody listening, and with a server that
+never answers, the write was refused (`it-fleet-attacks unreachable`). **The gap:** if Claude Code
+itself kills the hook at its timeout (a stalled machine), the call goes through. The Bash diff and
+the settings deny still stand behind it.
+
+**The sessions' sockets.** The control socket answers only tokens the fleet issued, and each
+token sees only its role's tools (an orchestrator can't call `grant_lease`). The enforcement socket
+only answers questions; it changes nothing. Both are 0600 in BotWatch's directory.
+
+**Machine sleep.** Leases expire on wall-clock time. A Mac that sleeps through an expiry expires
+the lease on waking; the sessions were asleep too, so nothing ran past it (seen in a run).
+
 ## Also in scope
 
 - **Token budget.** Counted once per API message (input + output + cache writes) as the stream
