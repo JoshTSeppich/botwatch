@@ -248,8 +248,14 @@ resumed session opened on the worker's conversation. Found on the way:
   the one-second tick and could swallow the 2.6s line. The window now sets
   `backgroundThrottling: false`.
 
-Next: re-record the README demo on the real product (question answered from the pill, flagged
-files refusing to merge, a selective merge, a clean conflict abort).
+**Demo: done.** `docs/demo.gif` and `docs/demo.mp4`: 60s, recorded with `tools/record-pill.mjs`,
+which records the pill's own page over the DevTools port and never the screen behind it, so nothing
+else is in it. Worker waits play 8× faster (the driver sets a mode file); everything else is real
+time. To re-record: run the packaged app with `--remote-debugging-port=9222`, start the
+recorder, drive the run, then SIGTERM the recorder to encode. Found while recording: the setup
+panel's free-text repo path put the home directory on screen. It now offers repo chips (folder
+names, with the full path on hover) and a native **Choose folder…**, as the spec drew it. One take
+was spoiled by a real click on a worker row, which opened its log panel.
 
 ## How the code is arranged
 

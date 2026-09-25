@@ -6,6 +6,14 @@ which one died. Checking meant cycling through terminal windows.
 
 Run agents in parallel. Review every change. Merge deliberately.
 
+![BotWatch orchestrating three workers: one asks a question answered from the pill, one leaves a .env and build output that refuse to merge until acknowledged, and a later merge conflicts and is aborted cleanly](docs/demo.gif)
+
+*A real run, recorded from the pill itself. Three haiku workers: one asks "formal or casual?"
+and is answered from the pill, one leaves a `.env` and build output that Merge refuses until
+each is acknowledged, and the last merge conflicts with one that landed and is aborted with
+nothing changed. Waiting for the workers is sped up 8×; everything else is real time.
+[mp4](docs/demo.mp4)*
+
 This is a small always-on-top pill that docks to the top edge of your terminal and tells you,
 without you asking: how many sessions are live, what each one is doing, which one needs you, and
 how much of the week's token budget is gone. Click a row and it brings that session's terminal
