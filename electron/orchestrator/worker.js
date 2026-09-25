@@ -157,6 +157,10 @@ export class Worker extends EventEmitter {
 
     this.child.on('exit', (code) => {
       if (this.state !== 'stopped') this.state = code === 0 ? 'done' : 'errored';
+      // A crash mid-turn never reports a finished turn, so nothing marked the
+      // moment its work stopped. Marking it here is what gets that partial
+      // work snapshotted and reviewable. (It still can't merge: it isn't done.)
+      if (this.state === 'errored' && !this.doneAt) this.doneAt = Date.now();
       this.emit('change', this);
     });
     return this;

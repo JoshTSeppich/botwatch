@@ -6,6 +6,7 @@
 
 import { execFile as execFileCb } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCb);
@@ -211,6 +212,17 @@ export class Run extends EventEmitter {
       .filter((f) => !ticked.has(`${f.worker}:${f.file}`));
     if (unacknowledged.length) {
       return { error: 'review flagged files that should probably not be merged', flagged: unacknowledged };
+    }
+
+    // A git process killed mid-write leaves index.lock behind, and every git
+    // command after it fails with a message about another process. Say so.
+    const gitDir = await execFile('git', ['-C', this.repo, 'rev-parse', '--absolute-git-dir'])
+      .then(({ stdout }) => stdout.trim())
+      .catch(() => null);
+    if (gitDir && (await stat(join(gitDir, 'index.lock')).then(() => true).catch(() => false))) {
+      return {
+        error: `git is locked: ${join(gitDir, 'index.lock')} exists. If no git command is running in this repo, a killed one left it — delete that file and merge again`,
+      };
     }
 
     // The cleanup below aborts a failed merge. If the checkout was already

@@ -114,12 +114,17 @@ export async function install(repo) {
   return path;
 }
 
+// Only ever removes BotWatch's own hook. Recovery calls this on repos whose
+// state it doesn't know, and a hook that isn't ours is the user's.
 export async function uninstall(repo) {
   const common = await commonDir(repo);
   const path = join(common, 'hooks', 'reference-transaction');
   const chained = `${path}.botwatch-chained`;
+  const current = await readFile(path, 'utf8').catch(() => null);
+  if (current == null || !current.includes('Installed by BotWatch')) return false;
   await rm(path, { force: true });
   await rename(chained, path).catch(() => {});
+  return true;
 }
 
 // The environment every spawned session gets: marks it as an agent session for

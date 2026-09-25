@@ -86,8 +86,10 @@ async function discover() {
       .catch(() => null);
     if (!entry?.sessionId || entry.kind !== 'interactive') continue;
     const pid = Number(entry.pid);
-    // The file outlives the process, so liveness is the pid, not the file.
+    // The file outlives the process, so liveness is the pid, not the file —
+    // and a pid can be reused, so it has to be the same process that wrote it.
     if (!alive(pid)) continue;
+    if (!(await sameProcess(pid, entry.procStart))) continue;
     found.push({
       sessionId: entry.sessionId,
       pid,
@@ -102,6 +104,33 @@ async function discover() {
     if (!targets.has(entry.sessionId)) targets.set(entry.sessionId, await resolveTarget(pid));
   }
   return found;
+}
+
+// pid:procStart -> whether that pid is still the process the file names.
+// Checked once per pair: a session's start time never changes.
+const identity = new Map();
+
+// Claude Code records its process start as `ps -o lstart` prints it in UTC.
+// A file without one (older CLI) is taken on its pid alone, as before.
+export async function sameProcess(pid, procStart, lstart = processStart) {
+  if (!procStart) return true;
+  const key = `${pid}:${procStart}`;
+  if (!identity.has(key)) {
+    const actual = await lstart(pid);
+    identity.set(key, actual == null || normalise(actual) === normalise(procStart));
+  }
+  return identity.get(key);
+}
+
+function normalise(text) {
+  return String(text).trim().replace(/\s+/g, ' ');
+}
+
+async function processStart(pid) {
+  const { stdout } = await run('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' },
+  }).catch(() => ({ stdout: '' }));
+  return stdout.trim() || null;
 }
 
 function alive(pid) {

@@ -109,6 +109,15 @@ export function createOrchestrate({ dock, host, statusEl }) {
 
     const form = el('form', 'setup');
     form.append(el('div', 'panel__title', 'Orchestrate'));
+    // A run that was interrupted last time: say what was cleaned up and
+    // which branches still hold its work.
+    for (const r of info.recovered ?? []) {
+      const parts = [`Recovered an interrupted run in ${r.repo.split('/').pop()}`];
+      if (r.stopped.length) parts.push(`stopped ${r.stopped.join(', ')}`);
+      if (r.hookRemoved) parts.push('removed its ref hook');
+      if (r.kept.length) parts.push(`its branches are kept: ${r.kept.join(', ')}`);
+      form.append(el('div', 'field__note', `${parts.join('; ')}.`));
+    }
 
     const goal = el('textarea', 'setup__goal');
     goal.name = 'goal';

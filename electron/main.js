@@ -14,6 +14,7 @@ import { probe as probePermissions, request as requestPermissions } from './perm
 import { trackTerminal } from './tracker.js';
 import { serveControl } from './orchestrator/control.js';
 import { createPilot } from './orchestrator/pilot.js';
+import { recover } from './orchestrator/recovery.js';
 import { setupInfo } from './orchestrator/setup.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,7 @@ let permitted = process.platform !== 'darwin';
 let tray = null;
 // The orchestrator run, if one is going. Its view rides along on every read.
 const pilot = createPilot();
+let recovered = [];
 
 function currentDisplayKey() {
   if (!terminal) return 'primary';
@@ -139,6 +141,10 @@ app.whenReady().then(async () => {
   // Listening before the window exists, so the first paint already has
   // whatever the hooks have said.
   await startHooks();
+  // A run whose BotWatch died (killed, crashed) left processes and a ref hook
+  // behind. Cleaned up once, before anything new starts.
+  recovered = await recover().catch(() => []);
+  for (const r of recovered) console.log(`recovered run ${r.id} in ${r.repo}: ${JSON.stringify(r)}`);
   await serveControl(pilot.current).catch((error) => {
     console.error(`control: not listening (${error.message}); orchestrator runs are unavailable`);
   });
@@ -173,7 +179,10 @@ app.whenReady().then(async () => {
 
   // v3. The renderer opens the setup panel; everything that touches a repo
   // happens here, in pilld.
-  ipcMain.handle('orch:setup', async (_event, repo) => setupInfo(repo, (await readSessions()).sessions ?? []));
+  ipcMain.handle('orch:setup', async (_event, repo) => ({
+    ...(await setupInfo(repo, (await readSessions()).sessions ?? [])),
+    recovered,
+  }));
   ipcMain.handle('orch:start', (_event, config) => pilot.start(config));
   ipcMain.handle('orch:review', () => pilot.review());
   ipcMain.handle('orch:merge', (_event, selection) => pilot.merge(selection));

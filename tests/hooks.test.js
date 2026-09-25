@@ -222,3 +222,11 @@ test('a worker reply becomes one plain sentence, past any "Done!"', async () => 
   assert.equal(plain("Done! I've added the `farewell` function to **src/greet.js**. Also a test."), "I've added the farewell function to src/greet.js");
   assert.equal(plain('Perfect! 1. **Created `scripts/build.js`** - copies src'), 'Created scripts/build.js - copies src');
 });
+
+test('a session file whose pid now belongs to another process is stale', async () => {
+  const { sameProcess } = await import('../electron/sessions.live.js');
+  const started = async () => 'Thu Sep 24 13:42:48 2026';
+  assert.equal(await sameProcess(111, 'Thu Sep 24 13:42:48 2026', started), true);
+  assert.equal(await sameProcess(222, 'Thu Sep  4 09:00:00 2026', async () => 'Thu Sep 24 13:42:48 2026'), false, 'pid reused');
+  assert.equal(await sameProcess(333, undefined, started), true, 'older CLI without procStart: pid alone, as before');
+});
