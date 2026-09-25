@@ -181,7 +181,7 @@ None open. Don't reopen these without a new reason.
      said otherwise; it generalised from one refused command. What is refused, flag or not, is
      inline code: `node -e "<code>"` gets "This command requires approval".
    - **Claude Code refuses a standalone `sleep`** in a worker, even in the foreground.
-4. *(Done: `docs/THREAT-MODEL.md`. Biggest open item: worker reads are unconfined, measured, and the registry allowlist is a way out.)* **`docs/THREAT-MODEL.md`** separating: the checkout's files; refs and history; secret
+4. *(Done: `docs/THREAT-MODEL.md`. The read gap it found is narrowed: secret locations denied at the Read tool and the Bash sandbox, registries off unless a run allows installs, all measured. Still a denylist, not confinement.)* **`docs/THREAT-MODEL.md`** separating: the checkout's files; refs and history; secret
    exfiltration; bad generated code. For each: what BotWatch does, what it relies on, what's open.
 5. **Recovery**, as integration scripts in `tools/`: app killed mid-run, worker crashed, stale
    session file, orphaned worktree and branch, merge interrupted halfway.

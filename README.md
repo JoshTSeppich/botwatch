@@ -111,7 +111,8 @@ percentage is measured against a guess of 40M.
 ## Orchestrating
 
 `⌥⌘O` opens the setup panel: a goal, a repo, a model, how many workers at once, a token budget,
-what workers may do (never more than your own sessions), and the test command. Start hands the
+what workers may do (never more than your own sessions), the test command, and whether workers may
+install packages (off by default: they reach Anthropic and nothing else). Start hands the
 goal to an orchestrator session, which splits it into tasks and starts a worker per task, each in
 its own git worktree on a `bw/` branch. The pill shows the run as a tree while it works.
 
@@ -184,9 +185,14 @@ still write to your checkout by absolute path, with no git involved.
 
 ### The holes, in the order I'd expect them to be hit
 
-- **A worker can read anything you can**, including `~/.ssh` (measured). Its network is limited to
-  Anthropic and the npm, PyPI and crates.io registries, but a request to one of those can carry
-  what it read. [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) has the measurements and the rest.
+- **Whatever a worker reads goes to Anthropic's API** as part of its conversation, like any Claude
+  Code session. No setting changes that.
+- **Secret locations are denied, but it's a denylist, not confinement.** Workers can't read
+  `~/.ssh`, `~/.aws`, the other usual credential files, keychains or browser profiles (measured,
+  at both the Read tool and Bash). Anything you keep elsewhere, they can.
+- **Package installs are off unless you turn them on for a run.** Off, a worker reaches only
+  Anthropic. On, it also reaches npm, PyPI and crates.io, and a request there can carry what it
+  read. [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) has the measurements and the rest.
 - `BOTWATCH_GUARD= git merge` still gets past the ref hook's env check. The sandbox stops the
   merge from reaching your checkout's `.git`, so this is narrower than it was, but the env check
   is a marker and not a lock.

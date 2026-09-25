@@ -79,11 +79,25 @@ previous session and recorded in `HANDOFF.md`; re-run them before relying on the
 
 ## 3. Secrets leaving the machine
 
+**Before anything else: whatever a worker reads goes to Anthropic's API as part of its
+conversation.** That's how every Claude Code session works, and no setting changes it. The rest of
+this section is about the files a worker is kept from reading, and the network it can't reach.
+
 **What BotWatch does**
 
-- Worker network is an allowlist: Anthropic, npm, PyPI and crates.io. Nothing else.
-- Workers can't reach BotWatch's sockets. The orchestrator's control socket is 0600 and needs a
-  per-run token as well.
+- **Denies known secret locations** at two layers: Read-tool permission rules, and the Bash
+  sandbox's `filesystem.denyRead`, which also applies to anything Bash runs. The locations are
+  `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.azure`, `~/.kube`, `~/.docker/config.json`,
+  `~/.gnupg`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`,
+  `~/Library/Keychains`, `~/Library/Cookies`, Safari, and the Chrome, Firefox, Brave, Edge and Arc
+  profiles (`SECRET_PATHS` in `settings.js`).
+- **This is a denylist, not confinement.** Everything not on the list is still readable: other
+  dotfiles, other repos, your documents. A secret kept anywhere else is readable.
+- **Network is Anthropic only** by default, with `strictAllowlist`, so an off-list host is refused
+  outright rather than sent to an approval prompt. The package registries (npm, PyPI, crates.io)
+  are opened only when setup's **Package installs** is on for that run.
+- Workers can't reach BotWatch's sockets. The orchestrator's control socket is also 0600 and needs a
+  per-run token.
 - Tests run under BotWatch's own Seatbelt profile: no network past loopback, and writes only in the
   worktree and temp.
 - The review flags new files that look like secrets, both by name (`.env`, keys, credentials) and
@@ -92,24 +106,41 @@ previous session and recorded in `HANDOFF.md`; re-run them before relying on the
 
 **Measured**
 
+Before the denylist:
+
 | From a worker | Result |
 | --- | --- |
 | read a canary file in `$HOME` | **read** |
 | list `~/.ssh` | **listed, including `id_ed25519`** |
-| `https://example.com`, `https://github.com` | blocked (sandbox: "deny network-outbound") |
 | `https://registry.npmjs.org/` | **200** |
+| `https://example.com`, `https://github.com` | blocked |
 | connect to `control.sock` / `pilld.sock` | EPERM |
 
-**Open, and the most important gap in this document**
+After it, with canaries in `~/.ssh` and `~/.aws` (removed afterwards):
 
-- **Reads are not confined.** A worker can read anything you can: SSH keys, cloud credentials,
-  browser profiles.
-- **The allowlist is a way out.** A GET to `registry.npmjs.org/<anything>` puts `<anything>` in a
-  third party's logs. The same goes for PyPI and crates.io.
-- Anything a worker reads also becomes part of its conversation with Anthropic's API. That is true
-  of every Claude Code session, and BotWatch doesn't change it.
-- The fix is the sandbox's read restrictions for secret locations, and/or dropping the package
-  registries from the allowlist for runs that don't need them. Neither is built.
+| From a worker | Installs off | Installs on |
+| --- | --- | --- |
+| Read tool on `~/.ssh/…`, `~/.aws/…` | denied: "File is in a directory that is denied by your permission settings" | same |
+| Bash `cat` on both, `ls ~/.ssh` | "Operation not permitted" | same |
+| `https://registry.npmjs.org/` | blocked: "host is not on the allow list" | **200** |
+| `npm install left-pad` | npm reports `E403 403 Forbidden` | not re-run |
+| `npm test` (with `~/.npmrc` denied) | runs, passes | runs, passes |
+| the session authenticates and works | yes | yes |
+
+How a missing package plays out, from the pill with installs off: the worker's brief says installs
+are off. It tried `npm install`, got npm's 403, and ended its turn with a question naming the
+package. The question reached the pill. My answer ("use `padStart`, no dependency") came back to
+it, and its snapshot has no `node_modules`. npm's own message ("403 Forbidden") is misleading. The
+brief is what makes the failure clear, not npm.
+
+**Open**
+
+- **Reads outside the denylist.** A secret stored anywhere not on the list is readable, and then
+  goes to Anthropic's API as part of the conversation.
+- **With installs on, the registries are a way out.** A GET to `registry.npmjs.org/<text>` carries
+  `<text>` to a third party. That is the trade the toggle makes, per run.
+- Environment variables are not scrubbed. A token exported in the environment BotWatch starts from
+  reaches the worker. The sandbox's `credentials.envVars` could deny named ones; not built.
 
 ## 4. Bad generated code
 
