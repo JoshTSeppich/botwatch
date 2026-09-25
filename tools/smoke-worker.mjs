@@ -28,9 +28,12 @@ const done = new Promise((resolve) =>
 worker.start();
 await Promise.race([done, new Promise((r) => setTimeout(r, 90_000))]);
 
-console.log('state    :', worker.state);
+// Read before stopping it: stop() sets the state to 'stopped', which is what
+// made this exit 1 on a worker that had finished.
+const state = worker.state;
+console.log('state    :', state);
 console.log('session  :', worker.sessionId ?? '(none — the worker never started)');
 console.log('tokens   :', worker.tokens);
 console.log('limits   :', JSON.stringify(worker.limits ?? null));
 worker.stop();
-process.exit(worker.state === 'done' ? 0 : 1);
+process.exit(state === 'done' ? 0 : 1);
