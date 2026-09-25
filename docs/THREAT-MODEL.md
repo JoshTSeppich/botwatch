@@ -238,11 +238,12 @@ or **detected** (it happens, is noticed, and the session is paused):
 | The same, through Bash | a diff of the worktree after every tool call; a change outside the claim pauses the worker and is logged | **Detected, then paused**. The file exists until you review it, and a branch with it can't be queued | `it-fleet-attacks claim`: a real worker wrote `NOTES.md` by Bash, was caught and paused |
 | Merge into your branches, and push | no tool at any level merges or pushes; staging (`botwatch/staging-<fleet>`) is BotWatch's and is merged into your branch only on your click, at the exact commit built and tested, if the base hasn't moved | **Prevented** | `fleet-rules.test.js`; `it-fleet`; `it-fleet-attacks merge` |
 | Permission above the ceiling | every session is started with `clampPermission` to the ceiling | **Prevented** | `fleet.test.js`; `it-fleet-attacks permission` |
-| An expired lease, including after the hypervisor dies | leases expire on pilld's clock; expiry pauses the orchestrator and its workers; the gate, the tools and the enforcement hook refuse under it; with the hypervisor gone nothing new starts | **Prevented** from starting anything or writing; the turn in flight when it expires is spent (**detected**) | `fleet.test.js`; `it-fleet-attacks expiry` |
+| An expired lease, including after the hypervisor dies | leases expire on pilld's clock (stopped while the machine sleeps); expiry pauses the orchestrator and its workers; the gate, the MCP tools and the enforcement hook (every tool call) refuse under it. With the hypervisor gone, running orchestrators carry on within their leases; no new orchestrator or lease | **Prevented** from starting anything or using a tool; the model turn in flight when it expires is spent (**detected**) | `fleet.test.js`; `it-fleet-attacks expiry` |
+| pilld killed mid-fleet | the enforcement hook refuses every tool call when pilld is unreachable; sessions exit when their turn ends (their stdin is gone); the next launch's recovery stops what is left, from the records of the hypervisor and each orchestrator | **Prevented** from running tools after the kill; the turn in flight is spent (**detected**) | `it-fleet-recovery`: nothing written in the 20s after a SIGKILL; every session ended; the user's hook, branches, uncommitted edits, worktree and own claude session untouched |
 | The hypervisor never reads worker transcripts | no tool returns one; its settings deny reading `~/.claude/projects` and the worktrees (Read tool and sandbox); it has no Bash, Write, Edit or subagents | **Prevented** | `fleet.test.js`; `it-fleet` (it used only BotWatch tools) |
 | The decision log | every answer with its level, its chain and the rule the model cited, verbatim, marked unverified | a record, not a limit: it never claims a rule was followed | `fleet.test.js` |
 
-**The enforcement hook fails closed.** It refuses when pilld is unreachable, when pilld doesn't
+**The enforcement hook fails closed, on every tool call of a fleet session.** It refuses when pilld is unreachable, when pilld doesn't
 answer within its own 2-second deadline (under Claude Code's 10-second hook timeout), and when it
 crashes (`… || exit 2`). Measured on the real CLI: with nobody listening, and with a server that
 never answers, the write was refused (`it-fleet-attacks unreachable`). **The gap:** if Claude Code
@@ -253,8 +254,10 @@ the settings deny still stand behind it.
 token sees only its role's tools (an orchestrator can't call `grant_lease`). The enforcement socket
 only answers questions; it changes nothing. Both are 0600 in BotWatch's directory.
 
-**Machine sleep.** Leases expire on wall-clock time. A Mac that sleeps through an expiry expires
-the lease on waking; the sessions were asleep too, so nothing ran past it (seen in a run).
+**Machine sleep.** Leases stop while the machine sleeps (Electron's `powerMonitor` suspend and
+resume) and are extended by the time asleep on waking; the sessions were asleep too. Unit-tested
+with emitted events, not with a real sleep. Before this, a run that slept through an expiry saw the
+lease expire on waking.
 
 ## Also in scope
 

@@ -380,7 +380,8 @@ Decisions made while building it, where the design left room:
   would act on changes (not on token counts, which made it poll), or at the timeout.
 - `resolve_lock` decisions are `sequence`, `narrow <id> <globs>`, `give <id>`. A sequenced claim
   is granted when the holder's orchestrator queues its work.
-- "Nothing new starts" after the hypervisor dies includes workers: the gate refuses every start.
+- After the hypervisor dies, orchestrators already running may still start workers within their
+  leases; only a new orchestrator or a new lease is refused (the user's ruling on review).
 - `ask_human` from the hypervisor returns at once; the answer goes to every orchestrator waiting
   on those questions. The human card queue is ranked by blocked work: the asking orchestrator plus
   its workers that are asking, a count pilld makes.
@@ -388,17 +389,31 @@ Decisions made while building it, where the design left room:
   hypervisor's to the user's card); a turn that stops short is nudged (orchestrators twice,
   the hypervisor three times). Measured need: in the first real run an orchestrator asked "you"
   in its closing text and stalled.
-- An adopted v3 orchestrator claims its whole repo (`**`), because it can't say what it will
-  touch.
+- An adopted v3 orchestrator gains `claim_paths` and is asked to declare its claim like any other;
+  until it does, it can't start workers (the user's ruling on review).
+- Leases stop on system sleep and resume on wake, extended by the time asleep: the host follows
+  `powerMonitor`'s `suspend`/`resume` (pass it as `power` when wiring `main.js`), and the clock
+  stops on suspend so no tick on waking can expire a lease first. Unit-tested with emitted events;
+  not measured with a real sleep.
+- The enforcement hook runs on **every** tool call of a fleet session, not only file writes: a real
+  SIGKILL of pilld showed orphaned workers writing on through Bash (200 files in 20s), because
+  Bash is watched by pilld's diff, which had died with it. Now every call needs a known session
+  with a live lease, so with pilld gone nothing more runs (measured: nothing written after the
+  kill). It costs one hook process per tool call.
+- `wait_for` returns when pilld pauses a worker for a claim, and `list_workers` names the paths
+  (`outsideClaim`). Found in a real run: an orchestrator waited forever on its paused worker.
 
 Tests: `tests/fleet.test.js` (each core-rule limit attacked through the MCP boundary, questions,
 the log, turns, adoption, recovery records, token routing) and `tests/fleet-rules.test.js`.
-Integration: `tools/it-fleet.mjs` (end to end) and `tools/it-fleet-attacks.mjs` (real models,
-told to get around each limit). Run long ones under `caffeinate -i`: the first run was frozen by
+Integration: `tools/it-fleet.mjs` (`basic` end to end, and `collide`: two goals on one file
+asking one question), `tools/it-fleet-attacks.mjs` (real models, told to get around each limit),
+and `tools/it-fleet-recovery.mjs` (a real SIGKILL of the host mid-fleet, with the user's own hook,
+branch, uncommitted edits, worktree and claude session in the repo, then recovery). Run long ones under `caffeinate -i`: the first run was frozen by
 idle sleep mid-way.
 
 Open for v4-pill: the UI (setup for goals and priorities, the hypervisor row, orchestrator rows,
-the ranked card queue, the staging review and Merge), and wiring the host into `main.js`.
+the ranked card queue, the staging review and Merge), and wiring the host into `main.js` with
+`powerMonitor` and the control and enforcement sockets.
 
 ## How the code is arranged
 
