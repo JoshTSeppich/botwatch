@@ -27,13 +27,16 @@ Where I departed from the spec, `docs/design-notes.md` says so and why.
 
 Download the `.dmg` from [Releases](../../releases), drag it to Applications, open it.
 
-It is not notarised — I don't pay for a Developer ID — so the first open needs a right-click:
+It is not notarised, because I don't pay for a Developer ID, so macOS refuses the first open. On
+macOS 15 and later, after it refuses, open **System Settings → Privacy & Security**, scroll to the
+message about BotWatch, and click **Open Anyway**. On older macOS, right-click the app, choose
+**Open**, then **Open** again. Either way, macOS remembers after once.
 
-```
-right-click BotWatch.app → Open → Open
-```
+Or, from Terminal, remove the download's quarantine flag:
 
-Do that once and macOS remembers.
+```sh
+xattr -dr com.apple.quarantine /Applications/BotWatch.app
+```
 
 Then install the Claude Code plugin that ships inside the app. It is what tells the pill a
 session is waiting on a permission prompt or a question:

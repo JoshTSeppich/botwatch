@@ -30,5 +30,7 @@ jobs:
             dist/*.dmg
             dist/*.zip
           body: |
-            Unsigned build. First open needs right-click → Open → Open.
+            Unsigned build, so macOS refuses the first open. macOS 15 and later: System Settings →
+            Privacy & Security → Open Anyway. Older macOS: right-click → Open → Open. Or:
+            xattr -dr com.apple.quarantine /Applications/BotWatch.app
             On first run the pill asks for Accessibility and Automation; see the README.
