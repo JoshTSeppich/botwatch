@@ -122,6 +122,53 @@ test('a branch that moved after the review is not merged', async () => {
   assert.equal(existsSync(join(f.repo, 'greet.js')), false);
 });
 
+test('a worktree written to after its snapshot is refused at merge, then snapshotted again', async () => {
+  const f = fixture();
+  writeFileSync(join(f.wt, 'greet.js'), 'one\n');
+  const run = runWith(f);
+  await run.snapshot(run.workers[0]);
+  const first = run.workers[0].snapshot.sha;
+  // The review is taken while the tree still matches the snapshot.
+  const [r] = await run.reviewAll();
+  assert.equal(r.sha, first);
+
+  // Something the turn didn't wait for writes after the review, with no new turn.
+  writeFileSync(join(f.wt, 'late.js'), 'late\n');
+  run.userApprovedMerge = true;
+  const out = await run.merge({ reviewed: [{ branch: r.branch, sha: r.sha }] });
+  assert.match(out.error, /worktree changed after the snapshot you reviewed/);
+  assert.equal(existsSync(join(f.repo, 'greet.js')), false, 'nothing merged');
+
+  // It is snapshotted again, and the old review no longer matches.
+  await run.resnapshotAll();
+  const second = run.workers[0].snapshot.sha;
+  assert.notEqual(second, first);
+  assert.equal(run.workers[0].changedAfterSnapshot.from, first);
+  assert.match(git(f.wt, 'show', '--name-only', '--format=', second), /late\.js/);
+  const again = await run.merge({ reviewed: [{ branch: r.branch, sha: r.sha }] });
+  assert.match(again.error, /changed since you reviewed it/);
+
+  // Reviewing the new snapshot is what lets it merge.
+  const [fresh] = await run.reviewAll();
+  const ok = await run.merge({ reviewed: [{ branch: fresh.branch, sha: fresh.sha }] });
+  assert.equal(ok.error, undefined, ok.error);
+  assert.equal(readFileSync(join(f.repo, 'late.js'), 'utf8'), 'late\n');
+});
+
+test('a clean worktree is not snapshotted again, and a running worker never is', async () => {
+  const f = fixture();
+  writeFileSync(join(f.wt, 'greet.js'), 'one\n');
+  const run = runWith(f);
+  await run.snapshot(run.workers[0]);
+  const sha = run.workers[0].snapshot.sha;
+  assert.equal(await run.resnapshot(run.workers[0]), null);
+  assert.equal(run.workers[0].snapshot.sha, sha);
+  run.workers[0].state = 'running';
+  writeFileSync(join(f.wt, 'more.js'), 'more\n');
+  assert.equal(await run.resnapshot(run.workers[0]), null, 'its turn will snapshot it');
+  assert.equal(run.workers[0].snapshot.sha, sha);
+});
+
 test('a conflicting merge is aborted, leaving the checkout as it was', async () => {
   const f = fixture();
   writeFileSync(join(f.wt, 'app.js'), 'export const a = "worker";\n');

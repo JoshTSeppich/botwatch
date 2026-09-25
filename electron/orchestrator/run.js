@@ -69,6 +69,11 @@ export class Run extends EventEmitter {
     // out from under a conversation would be worse than the leak was.
     this.reaper = setInterval(() => this.reap(), 60_000);
     this.reaper.unref?.();
+    // A snapshot is only good while the worktree still matches it. Something
+    // can write after the turn ended — a subagent the turn didn't wait for, a
+    // process it left running — so finished worktrees are looked at again.
+    this.watcher = setInterval(() => void this.resnapshotAll(), 10_000);
+    this.watcher.unref?.();
   }
 
   // The ref-level guard has to exist before any worker does.
@@ -82,6 +87,7 @@ export class Run extends EventEmitter {
   // finished, and that is exactly why the processes piled up.
   close() {
     clearInterval(this.reaper);
+    clearInterval(this.watcher);
     for (const worker of this.workers) worker.release();
     return refguard.uninstall(this.repo).catch(() => {});
   }
@@ -93,9 +99,15 @@ export class Run extends EventEmitter {
   async snapshot(worker) {
     if (!worker?.doneAt || worker.snapshottedFor === worker.doneAt) return null;
     worker.snapshottedFor = worker.doneAt;
+    return this.#take(worker);
+  }
+
+  async #take(worker) {
+    worker.snapshotting = true;
     const result = await this.commitWorktree(worker.branch).catch((err) => ({
       error: String(err?.message ?? err),
     }));
+    worker.snapshotting = false;
     if (result?.error) return result;
     // Provenance: which commit this is, when it was taken, and what the tests
     // said about that exact commit. The review panel shows all of it, and
@@ -106,6 +118,29 @@ export class Run extends EventEmitter {
     worker.test = await this.testWorktree(worker);
     this.emit('change', this);
     return result;
+  }
+
+  // The worktree has changed since its snapshot: anything tracked or
+  // untracked that `git add -A` would pick up.
+  async worktreeChanged(worker) {
+    if (!worker?.cwd) return false;
+    const { stdout } = await execFile('git', ['-C', worker.cwd, 'status', '--porcelain']).catch(() => ({ stdout: '' }));
+    return Boolean(stdout.trim());
+  }
+
+  // A finished worker whose worktree moved after its snapshot gets a new
+  // one, with its own test run. The review that was shown is then stale, and
+  // merge() says so: it compares against the new tip.
+  async resnapshot(worker) {
+    if (!worker?.snapshot?.sha || worker.snapshotting) return null;
+    if (!['done', 'errored', 'stopped'].includes(worker.state)) return null;
+    if (!(await this.worktreeChanged(worker))) return null;
+    worker.changedAfterSnapshot = { at: Date.now(), from: worker.snapshot.sha };
+    return this.#take(worker);
+  }
+
+  async resnapshotAll() {
+    for (const worker of this.workers) await this.resnapshot(worker).catch(() => null);
   }
 
   // Separate so tests can stand in for a real test run.
@@ -143,6 +178,7 @@ export class Run extends EventEmitter {
   // What Merge is about to bring in, per worker. The UI shows this; merge()
   // also refuses on it, so the gate is not only a disabled button.
   async reviewAll() {
+    await this.resnapshotAll();
     const out = [];
     for (const worker of this.workers) {
       if (!worker.cwd) continue;
@@ -196,6 +232,15 @@ export class Run extends EventEmitter {
       if (!branch?.startsWith('bw/')) return { error: `refusing to merge ${branch}: not a worker branch` };
     }
 
+    // Looked at before reviewAll(), which would snapshot a changed tree
+    // again and leave only "the branch moved" to say. The tree can change
+    // between the watcher's last look and this click.
+    const changed = new Set();
+    for (const { branch } of reviewed) {
+      const worker = this.workers.find((w) => w.branch === branch);
+      if (worker && (await this.worktreeChanged(worker))) changed.add(branch);
+    }
+
     const reviews = await this.reviewAll();
     const byBranch = new Map(reviews.map((r) => [r.branch, r]));
     const ticked = new Set(acknowledged);
@@ -204,7 +249,12 @@ export class Run extends EventEmitter {
       const current = byBranch.get(branch);
       if (!current) return { error: `${branch} is not a branch of this run` };
       const worker = this.workers.find((w) => w.branch === branch);
-      const verdict = policy.canMergeBranch(worker, { reviewedSha: sha, tipSha: current.sha, merged: landed.has(branch) });
+      const verdict = policy.canMergeBranch(worker, {
+        reviewedSha: sha,
+        tipSha: current.sha,
+        merged: landed.has(branch),
+        worktreeChanged: changed.has(branch),
+      });
       if (!verdict.ok) return { error: verdict.reason };
     }
     const unacknowledged = reviewed

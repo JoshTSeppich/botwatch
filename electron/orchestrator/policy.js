@@ -82,13 +82,20 @@ export function canMerge(state) {
 // Whether one worker's branch may merge. Per branch, not per run: a finished
 // worker's work can land while others are still going. Finished, snapshotted,
 // tested, not merged already, and still at the commit the user reviewed.
-export function canMergeBranch(worker, { reviewedSha, tipSha, merged = false }) {
+export function canMergeBranch(worker, { reviewedSha, tipSha, merged = false, worktreeChanged = false }) {
   if (!worker) return { ok: false, reason: 'not a worker of this run' };
   if (merged) return { ok: false, reason: `${worker.branch} is already merged` };
   if (worker.takenOver) return { ok: false, reason: `${worker.id} was taken over; its branch is yours to finish and merge` };
   if (worker.state !== 'done') return { ok: false, reason: `${worker.id} has not finished (${worker.state})` };
   if (!worker.snapshot?.sha) return { ok: false, reason: `${worker.id} has no snapshot yet` };
   if (worker.test?.running) return { ok: false, reason: `${worker.id}'s tests are still running` };
+  if (worker.snapshotting) return { ok: false, reason: `${worker.id} is being snapshotted` };
+  // The reviewed commit is still the tip, but the worktree has moved on from
+  // it: something wrote after the snapshot. It gets a new snapshot, and a
+  // new review.
+  if (worktreeChanged) {
+    return { ok: false, reason: `${worker.id}'s worktree changed after the snapshot you reviewed; it is being snapshotted again — review it again` };
+  }
   if (tipSha !== reviewedSha || worker.snapshot.sha !== reviewedSha) {
     return { ok: false, reason: `${worker.branch} changed since you reviewed it; review it again` };
   }

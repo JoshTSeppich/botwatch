@@ -108,3 +108,16 @@ test('a worker counts each message once, not once per record', () => {
   assert.equal(w.tokens, 111);
   assert.equal(emitted, 111);
 });
+
+test('a turn that ends with background tasks still running is not finished', () => {
+  const w = stubWorker();
+  w._feed({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a1' }] });
+  w._feed({ type: 'result', is_error: false, result: 'launched, waiting' });
+  assert.equal(w.state, 'running');
+  assert.equal(w.doneAt, undefined, 'nothing to snapshot yet');
+  w._feed({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+  assert.equal(w.state, 'running', 'the session reports back in a turn of its own');
+  w._feed({ type: 'result', is_error: false, result: 'done' });
+  assert.equal(w.state, 'done');
+  assert.ok(w.doneAt);
+});

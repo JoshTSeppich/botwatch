@@ -32,6 +32,11 @@ export function readEvent(record) {
   if (record.type === 'result') {
     return { kind: 'finished', error: Boolean(record.is_error), result: record.result ?? null };
   }
+  // Subagents the session started in the background. Its turn can end while
+  // they are still writing to the worktree.
+  if (record.type === 'system' && record.subtype === 'background_tasks_changed') {
+    return { kind: 'tasks', tasks: Array.isArray(record.tasks) ? record.tasks.map((t) => t.task_id) : [] };
+  }
   // The real plan windows, straight from the CLI. The handoff assumed these
   // were unavailable and fell back to counting tokens against a number the user
   // types in; they are not, so nothing has to be guessed.
@@ -127,6 +132,7 @@ export class Worker extends EventEmitter {
     // Counted once per API message, trued up at each result: see tokens.js.
     this.meter = createMeter();
     this.tokens = 0;
+    this.backgroundTasks = [];
     // What the log panel shows; see log.js.
     this.log = { seq: 0, items: [] };
     this.sessionId = null;
@@ -188,6 +194,11 @@ export class Worker extends EventEmitter {
     const event = readEvent(record);
     if (!event) return;
     if (event.kind === 'started') this.sessionId = event.sessionId;
+    if (event.kind === 'tasks') {
+      this.backgroundTasks = event.tasks;
+      this.emit('change', this);
+      return;
+    }
     if (event.kind === 'progress' && (event.tool || event.text)) {
       this.summary = event.tool ? phrase(event.tool, event.input ?? {}) : plain(event.text);
     }
@@ -200,6 +211,15 @@ export class Worker extends EventEmitter {
       // went wrong: the worker is paused, not errored, and its work is not
       // finished, so nothing is snapshotted.
       this.pausing = false;
+      this.emit('change', this);
+      return;
+    }
+    if (event.kind === 'finished' && !event.error && this.backgroundTasks.length) {
+      // The turn ended, but subagents it started in the background are still
+      // running and may still write. Not finished, so not snapshotted: the
+      // session starts another turn on its own when they report back
+      // (measured on 2.1.282), and that turn's end is the real one.
+      this.summary = `waiting for ${this.backgroundTasks.length} background task${this.backgroundTasks.length === 1 ? '' : 's'}`;
       this.emit('change', this);
       return;
     }
