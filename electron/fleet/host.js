@@ -14,8 +14,14 @@ import { Fleet } from './fleet.js';
 
 export const ENFORCE_PATH = join(CONTROL_PATH, '..', 'enforce.sock');
 
-export function createFleetHost({ controlPath = CONTROL_PATH, enforcePath = ENFORCE_PATH, runsDir = RUNS_DIR, onChange = () => {} } = {}) {
+// `power` is Electron's powerMonitor in pilld (anything with on/off for
+// 'suspend' and 'resume'): system sleep stops the leases' clock.
+export function createFleetHost({ controlPath = CONTROL_PATH, enforcePath = ENFORCE_PATH, runsDir = RUNS_DIR, onChange = () => {}, power = null } = {}) {
   let fleet = null;
+  const onSuspend = () => fleet?.sleep();
+  const onResume = () => fleet?.wake();
+  power?.on('suspend', onSuspend);
+  power?.on('resume', onResume);
   const recorders = new Map();
 
   function record(fleetNow) {
@@ -81,6 +87,8 @@ export function createFleetHost({ controlPath = CONTROL_PATH, enforcePath = ENFO
       await r.ready.then(() => r.recorder.close(final)).catch(() => {});
     }
     recorders.clear();
+    power?.off('suspend', onSuspend);
+    power?.off('resume', onResume);
     onChange();
   }
 

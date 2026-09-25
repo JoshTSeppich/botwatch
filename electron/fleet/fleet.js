@@ -68,6 +68,9 @@ export const ORCHESTRATOR_TOOLS = [
   ['enqueue_merge', "Put your finished workers' branches in the merge queue. The user approves merges; you can't.", {}],
 ];
 
+// An adopted v3 orchestrator keeps its tools and gains claim_paths.
+export const ADOPTED_TOOLS = [...tools.TOOLS, ORCHESTRATOR_TOOLS.find(([name]) => name === 'claim_paths')];
+
 export const HYPERVISOR_BRIEF = [
   'You are the BotWatch hypervisor. Your only tools are the botwatch MCP tools. You never edit code and never read worker transcripts.',
   'For each goal below, write a brief and start one orchestrator with spawn_orchestrator, giving it a lease: tokens, worker slots and minutes.',
@@ -159,9 +162,33 @@ export class Fleet extends EventEmitter {
     return this.spent >= this.budgetTokens;
   }
 
+  // System sleep. Every session is asleep too, so nothing runs under a lease
+  // while the machine sleeps, and the time asleep doesn't count against it.
+  // The clock stops on suspend, so no tick on waking can expire a lease
+  // before the resume that gives the time back.
+  sleep(at = this.now()) {
+    if (this.suspendedAt != null) return;
+    this.suspendedAt = at;
+    clearInterval(this.clock);
+    this.decisions.record({ by: 'pilld', level: 'pilld', chain: 'H', kind: 'lease', text: 'the machine is going to sleep; leases stop' });
+  }
+
+  wake(at = this.now()) {
+    if (this.suspendedAt == null) return;
+    const asleep = Math.max(0, at - this.suspendedAt);
+    this.suspendedAt = null;
+    for (const lease of this.leases.values()) if (!lease.expired && !lease.revoked) lease.expiresAt += asleep;
+    this.decisions.record({ by: 'pilld', level: 'pilld', chain: 'H', kind: 'lease', text: `the machine woke after ${Math.round(asleep / 1000)}s asleep; every live lease was extended by that` });
+    this.clock = setInterval(() => this.tick(), 1000);
+    this.clock.unref?.();
+    this.tick(at);
+    this.emit('change');
+  }
+
   // Everything that has to happen on a clock rather than on an event: leases
   // expire on pilld's time, with or without a hypervisor.
   tick(now = this.now()) {
+    if (this.suspendedAt != null) return;
     for (const [id, lease] of this.leases) {
       if (!lease.expired && !lease.revoked && now >= lease.expiresAt) {
         lease.expired = true;
@@ -206,7 +233,6 @@ export class Fleet extends EventEmitter {
   // Whether anything new may start under an orchestrator. `queue` means wait.
   gate(id) {
     if (this.stopped) return { ok: false, reason: 'the fleet was stopped' };
-    if (this.hypervisorGone) return { ok: false, reason: 'the hypervisor is gone, so nothing new starts' };
     if (this.budgetExhausted) return { ok: false, reason: 'the global budget is spent' };
     const o = this.orchestrators.get(id);
     if (!o) return { ok: false, reason: `${id} is not an orchestrator of this fleet` };
@@ -263,8 +289,8 @@ export class Fleet extends EventEmitter {
     this.hypervisor.on('tokens', (_s, n) => this.#charge('H', n));
     this.hypervisor.on('change', () => {
       this.#afterHypervisorTurn();
-      // Its process ended: nothing new starts, and the leases run out on
-      // pilld's clock.
+      // Its process ended: no new orchestrator and no new lease. The ones
+      // running carry on within their leases, which run out on pilld's clock.
       if (!this.hypervisorGone && this.hypervisor.child && this.hypervisor.child.exitCode !== null) this.#hypervisorGone();
       this.emit('change');
     });
@@ -276,12 +302,12 @@ export class Fleet extends EventEmitter {
   #hypervisorGone() {
     if (this.hypervisorGone) return;
     this.hypervisorGone = true;
-    this.decisions.record({ by: 'pilld', level: 'pilld', chain: 'H', kind: 'spawn', text: 'the hypervisor ended; orchestrators run until their leases expire, and nothing new starts' });
+    this.decisions.record({ by: 'pilld', level: 'pilld', chain: 'H', kind: 'spawn', text: 'the hypervisor ended; orchestrators carry on within their leases until they expire; no new orchestrator or lease' });
     this.emit('change');
   }
 
   async spawnOrchestrator({ goal: goalId, brief, tokens, slots, expires }) {
-    if (this.hypervisorGone || this.stopped) return { error: 'nothing new starts now' };
+    if (this.hypervisorGone || this.stopped) return { error: 'no new orchestrator: the hypervisor is gone' };
     const goal = this.goals.find((g) => g.id === goalId);
     if (!goal) return { error: `no goal ${goalId}; the goals are ${this.goals.map((g) => g.id).join(', ')}` };
     if ([...this.orchestrators.values()].some((o) => o.goal.id === goalId && !o.finished)) return { error: `${goalId} already has an orchestrator` };
@@ -364,14 +390,24 @@ export class Fleet extends EventEmitter {
     run.on('toolResult', (worker) => void this.#checkClaim(id, worker));
     session?.on('tokens', (_s, n) => this.#charge(id, n));
     this.tokens.set(token, { role: 'V3', id });
-    const claim = this.claimPaths(id, ['**']);
-    this.decisions.record({ by: 'pilld', level: 'pilld', chain: chain('H', id), kind: 'spawn', text: `adopted a v3 orchestrator as ${id}, lease ${lease.tokens.toLocaleString('en-US')} tokens, ${lease.slots} slots; claim ${claim.granted ? 'granted' : 'waiting'}` });
+    // It declares its claim like any other orchestrator, with claim_paths,
+    // which its tools now include. Until then it can't start workers.
+    session?.message?.(
+      'You are now under a BotWatch hypervisor. Before you start any more workers, call claim_paths with the repo paths ' +
+        'your workers will change (globs like src/ui/**). Workers already running carry on. Questions for the user now go through ask_human as before.',
+    );
+    this.decisions.record({ by: 'pilld', level: 'pilld', chain: chain('H', id), kind: 'spawn', text: `adopted a v3 orchestrator as ${id}, lease ${lease.tokens.toLocaleString('en-US')} tokens, ${lease.slots} slots; asked to claim its paths` });
     this.emit('change');
-    return { id, lease: this.leaseView(id), claim };
+    return { id, lease: this.leaseView(id) };
   }
 
   async callAdopted(id, name, args = {}) {
     const o = this.orchestrators.get(id);
+    if (name === 'claim_paths') return this.claimPaths(id, args.paths);
+    if (name === 'spawn_worker') {
+      const verdict = this.gate(id);
+      if (!verdict.ok && !verdict.queue) return { error: verdict.reason };
+    }
     const live = leaseLive(this.leases.get(id), this.now());
     if (['spawn_worker', 'message_worker', 'stop_worker'].includes(name) && !live.ok) return { error: live.reason };
     if (name === 'ask_human') return this.askUp(id, { question: args.question, options: args.options, suggestion: args.suggestion, worker: args.worker });
@@ -518,6 +554,16 @@ export class Fleet extends EventEmitter {
     this.#reconsider();
   }
 
+  // May this session use a tool at all? A session pilld doesn't know, or
+  // whose lease isn't live, may not. (With pilld gone, the hook refuses.)
+  mayUse(session) {
+    const [oid, wid] = String(session ?? '').split('/');
+    const o = this.orchestrators.get(oid);
+    if (!o?.run.find?.(wid)) return { ok: false, reason: 'unknown session' };
+    const live = leaseLive(this.leases.get(oid), this.now());
+    return live.ok ? { ok: true } : { ok: false, reason: `nothing more under this lease: ${live.reason}` };
+  }
+
   // May this session write this path? For the enforcement hook, answered
   // from live state, so claims made after a worker started still hold.
   mayWrite(session, path) {
@@ -564,7 +610,7 @@ export class Fleet extends EventEmitter {
   }
 
   grantLease({ id, tokens, slots, expires }) {
-    if (this.hypervisorGone) return { error: 'nothing new starts now' };
+    if (this.hypervisorGone) return { error: 'no new lease: the hypervisor is gone' };
     const lease = this.leases.get(id);
     if (!lease) return { error: `no orchestrator ${id}` };
     const next = { tokens: Number(tokens), slots: Number(slots), expiresAt: this.now() + minutes(expires) };
@@ -836,7 +882,7 @@ export class Fleet extends EventEmitter {
     const role = this.tokens.get(token);
     if (!role) return null;
     if (role.role === 'H') return { tools: HYPERVISOR_TOOLS, call: (name, args) => this.callHypervisor(name, args) };
-    if (role.role === 'V3') return { tools: tools.TOOLS, call: (name, args) => this.callAdopted(role.id, name, args) };
+    if (role.role === 'V3') return { tools: ADOPTED_TOOLS, call: (name, args) => this.callAdopted(role.id, name, args) };
     return { tools: ORCHESTRATOR_TOOLS, call: (name, args) => this.callOrchestrator(role.id, name, args) };
   }
 

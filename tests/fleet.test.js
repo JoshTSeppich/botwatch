@@ -210,13 +210,16 @@ test("the other orchestrators' claims are in a worker's settings at spawn", asyn
 
 test('attack: an expired lease, used through every tool, including after the hypervisor dies', async () => {
   const { f, hv } = await started();
-  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 1 });
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 3, expires: 1 });
   await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
   await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' });
-  // The hypervisor dies; the lease still runs out on pilld's clock.
+  // The hypervisor dies. O1 carries on within its lease; nothing new above it.
   f.hypervisor.child = { exitCode: 1 };
   f.hypervisor.emit('change');
   assert.equal(f.hypervisorGone, true);
+  assert.equal((await f.callOrchestrator('O1', 'spawn_worker', { task: 'b' })).state, 'running', 'a worker within the lease still starts');
+  assert.match((await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 1_000, slots: 1, expires: 5 })).error, /no new orchestrator/);
+  // Its lease still runs out on pilld's clock.
   f.advance(61_000);
   const o = f.orchestrators.get('O1');
   assert.equal(o.session.state, 'paused');
@@ -225,7 +228,7 @@ test('attack: an expired lease, used through every tool, including after the hyp
     assert.match((await f.callOrchestrator('O1', name, args)).error, /expired|nothing new/, name);
   }
   assert.match((await hv('resume', { id: 'O1' })).error, /expired/);
-  assert.match((await hv('grant_lease', { id: 'O1', tokens: 10_000, slots: 1, expires: 60 })).error, /nothing new/);
+  assert.match((await hv('grant_lease', { id: 'O1', tokens: 10_000, slots: 1, expires: 60 })).error, /no new lease/);
   assert.equal(f.mayWrite('O1/w1', '/tmp/src/a.js').ok, false, 'the hook refuses writes too');
   assert.match(f.decisions.list({ kind: 'lease' }).at(-1).text, /expired/);
 });
@@ -458,18 +461,24 @@ test('waiting on list_orchestrators ignores token counts and wakes on what matte
 
 // ---- adopting a v3 orchestrator -------------------------------------------------
 
-test('a v3 orchestrator is adopted under a lease from its budget, its repo claimed, its questions climbing', async () => {
+test('a v3 orchestrator is adopted under a lease from its budget, declares its claim, its questions climbing', async () => {
   const { f } = await started();
   const run = new FakeRun({ repo: '/r', goal: 'v3 goal', budgetTokens: 50_000, maxWorkers: 2 });
   run.ledger.spent = 12_000;
   const session = new FakeSession({ id: 'O' });
+  const told = [];
+  session.message = (t) => told.push(t);
   const out = f.adopt({ run, session, token: 'v3-token' });
   assert.equal(out.id, 'O1');
   assert.equal(f.leases.get('O1').tokens, 50_000);
   assert.equal(f.leases.get('O1').spent, 12_000);
-  assert.deepEqual(out.claim.granted, ['**']);
+  assert.match(told[0], /claim_paths/, 'it is asked to declare its claim');
   const role = f.resolve('v3-token');
   assert.ok(role.tools.some(([n]) => n === 'ask_human'), 'it keeps the tools it was started with');
+  assert.ok(role.tools.some(([n]) => n === 'claim_paths'), 'and gains claim_paths');
+  assert.match((await role.call('spawn_worker', { task: 'x' })).error, /claim your paths/, 'no workers before its claim');
+  assert.deepEqual((await role.call('claim_paths', { paths: ['api/**'] })).granted, ['api/**']);
+  assert.equal((await role.call('spawn_worker', { task: 'x' })).state, 'running');
   const asked = role.call('ask_human', { question: 'Which DB?', worker: 'w1' });
   assert.equal(f.listOrchestrators().questions[0].question, 'Which DB?');
   f.answer('q1', 'Postgres', 'already decided for O2');
@@ -511,4 +520,36 @@ test("the host records the hypervisor and every orchestrator for recovery, and r
   assert.deepEqual(reports.map((r) => r.id).sort(), ['rec-H', 'rec-O1']);
   host.fleet.stop();
   await host.fleet.close();
+});
+
+// ---- system sleep ------------------------------------------------------------------
+
+test('leases stop while the machine sleeps and resume on wake, extended by the time asleep', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 10 });
+  const before = f.leases.get('O1').expiresAt;
+  const t0 = f.now();
+  f.sleep(t0);
+  // A tick on waking, before the resume event, must not expire it.
+  f.advance(30 * 60_000);
+  assert.equal(f.leases.get('O1').expired, false);
+  f.wake(t0 + 30 * 60_000);
+  assert.equal(f.leases.get('O1').expiresAt, before + 30 * 60_000);
+  assert.equal(f.leases.get('O1').expired, false);
+  f.advance(10 * 60_000);
+  assert.equal(f.leases.get('O1').expired, true, 'the lease still runs out, after its awake minutes');
+  assert.match(f.decisions.list({ kind: 'lease' }).find((d) => /woke/.test(d.text)).text, /1800s asleep/);
+});
+
+test("the host follows the power monitor's suspend and resume", async () => {
+  const { createFleetHost } = await import('../electron/fleet/host.js');
+  const power = new EventEmitter();
+  const host = createFleetHost({ controlPath: '/tmp/u-c.sock', enforcePath: '/tmp/u-e.sock', runsDir: mkdtempSync(join(tmpdir(), 'bw-runs-')), power });
+  await host.start({ id: 'pw', goals: [{ id: 'g1', goal: 'x', repo: '/r', priority: 1 }], budgetTokens: 100_000, maxSessions: 4, dir: mkdtempSync(join(tmpdir(), 'bw-fleet-')), session: (o) => new FakeSession(o), run: (o) => new FakeRun(o) });
+  power.emit('suspend');
+  assert.notEqual(host.fleet.suspendedAt, null);
+  power.emit('resume');
+  assert.equal(host.fleet.suspendedAt, null);
+  await host.close();
+  assert.equal(power.listenerCount('suspend'), 0);
 });
