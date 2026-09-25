@@ -1403,3 +1403,108 @@
   flex: none;
   white-space: nowrap;
 }
+
+/* ---- motion ---------------------------------------------------------------
+   The drum holds what the wheel turns; it clips at the pill's own height so a
+   line going over the top disappears into the shading, not onto the screen. */
+.drum {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.face {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.face--old {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Intrinsic-width pills (empty, notice) size to the sentence. */
+.pill--status.is-empty .drum,
+.pill--status.is-notice .drum,
+.pill--status.is-empty .face,
+.pill--status.is-notice .face {
+  flex: none;
+}
+
+/* F6 escalation. Stage 1 is the ordinary 2s pulse. */
+.pill--status.is-esc-2 .hdr__badge .dot,
+.pill--status.is-esc-3 .hdr__badge .dot {
+  animation-duration: 1.2s;
+}
+
+.pill--status.is-esc-2 {
+  border-color: color-mix(in srgb, var(--waiting) 45%, transparent);
+}
+
+.pill--status.is-esc-3 {
+  border-color: var(--waiting);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--waiting) 22%, transparent),
+    0 0 18px color-mix(in srgb, var(--waiting) 35%, transparent),
+    var(--shadow);
+}
+
+.pill--status.is-esc-2 .prose,
+.pill--status.is-esc-3 .prose {
+  color: var(--wait-ink);
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .face {
+    will-change: opacity;
+  }
+}
+
+/* A worker's turn just finished: its row lights once, 1.6s. */
+.row--flash {
+  animation: row-flash 1.6s ease-out;
+}
+
+@keyframes row-flash {
+  0% {
+    background: color-mix(in srgb, var(--working) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* F6 on the question card, same stages as the pill. */
+.question.is-esc-2 {
+  border-color: color-mix(in srgb, var(--waiting) 45%, transparent);
+}
+
+.question.is-esc-3 {
+  border-color: var(--waiting);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--waiting) 22%, transparent),
+    0 0 18px color-mix(in srgb, var(--waiting) 35%, transparent),
+    var(--shadow-open);
+}
+
+.question.is-esc-2 .question__text,
+.question.is-esc-3 .question__text {
+  color: var(--wait-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row--flash {
+    animation: none;
+  }
+}

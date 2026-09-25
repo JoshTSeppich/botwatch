@@ -4,7 +4,9 @@
 // Nothing here decides anything about a repo. The panels show what pilld
 // reports and send back what the user chose; pilld checks it all again.
 
-import { abbrevTokens, formatElapsed } from './format.js';
+import { abbrevTokens, formatElapsed, truncate } from './format.js';
+import { plain } from '../electron/orchestrator/phrase.js';
+import { createRoller, escalationStage } from './motion.js';
 import { orchestratorPill } from './orchestrator-view.js';
 
 const WORKER_CHOICES = [2, 4, 6];
@@ -82,6 +84,14 @@ export function createOrchestrate({ dock, host, statusEl }) {
   // down and up, and the click went nowhere.
   let drawn = '';
   let pressed = false;
+  // The collapsed line outlives the tree around it, so the wheel can turn it.
+  let lineEl = null;
+  let lineRoller = null;
+  // "w1 finished: …" for 2.6s when a worker's turn finishes (from the demo).
+  let flash = null;
+  const seenState = new Map();
+  // F6 for the question card: when it appeared or was last hovered.
+  let questionSince = null;
   runEl.addEventListener('pointerdown', () => {
     pressed = true;
   });
@@ -321,8 +331,23 @@ export function createOrchestrate({ dock, host, statusEl }) {
 
   // ---- the tree ----------------------------------------------------------
 
-  function pillModel(run) {
-    const aggregate = run.workers.some((w) => w.state === 'errored')
+  function noteFinished(run, now) {
+    for (const w of run.workers) {
+      const before = seenState.get(w.id);
+      if (before && before !== 'done' && w.state === 'done') {
+        const name = truncate(plain(w.task), 40);
+        flash = { text: `${w.id} finished: ${name}`, until: now + 2600 };
+      }
+      seenState.set(w.id, w.state);
+    }
+    if (flash && now >= flash.until) flash = null;
+  }
+
+  function pillModel(run, now = Date.now()) {
+    const flashing = flash && now < flash.until;
+    const aggregate = flashing
+      ? 'done'
+      : run.workers.some((w) => w.state === 'errored')
       ? 'errored'
       : run.question
         ? 'waiting'
@@ -333,7 +358,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
       aggregate,
       activeWorkers: run.activeWorkers,
       repo: run.repo,
-      sentence: run.sentence,
+      sentence: flashing ? flash.text : run.sentence,
       tasks: run.workers,
       model: run.model,
       time: formatElapsed(run.elapsedMs / 1000),
@@ -341,6 +366,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
       workers: run.workers.map((w) => ({
         ...w,
         summary: w.question ? `Asks: ${w.question}` : w.test?.running ? 'running the tests' : w.summary,
+        flash: Boolean(w.finishedAt && now - w.finishedAt < 1600),
         time: abbrevTokens(w.tokens),
       })),
       budget: run.budget,
@@ -353,9 +379,15 @@ export function createOrchestrate({ dock, host, statusEl }) {
     const active = Boolean(run && !run.closed);
     statusEl.style.display = active ? 'none' : '';
     showQuestion(active ? run.question : null);
+    escalateQuestion(active ? run.question : null);
+    if (active) noteFinished(run, Date.now());
     if (!active) {
       treeEl.textContent = '';
       drawn = '';
+      lineEl = null;
+      lineRoller = null;
+      seenState.clear();
+      flash = null;
       return;
     }
     const model = pillModel(run);
@@ -371,6 +403,23 @@ export function createOrchestrate({ dock, host, statusEl }) {
     treeEl.textContent = '';
 
     const pill = orchestratorPill(model);
+    // Keep one collapsed line across rebuilds, and let the roller decide when
+    // what it says changes.
+    const fresh = pill.querySelector('.hdr');
+    const lineKey = JSON.stringify([model.aggregate, model.sentence, model.repo, model.model, model.tasks.map((t) => t.state)]);
+    if (!lineEl) {
+      lineEl = fresh;
+      lineRoller = createRoller(lineEl.querySelector('.drum'));
+      lineRoller.change(lineKey, () => {});
+    } else {
+      pill.replaceChild(lineEl, fresh);
+      lineRoller.change(lineKey, () => {
+        lineEl.querySelector('.hdr__badge').replaceWith(fresh.querySelector('.hdr__badge'));
+        lineEl.querySelector('.face:not(.face--old)').replaceChildren(...fresh.querySelector('.face').childNodes);
+      });
+      const clock = lineEl.querySelector('.eta');
+      if (clock) clock.textContent = model.time;
+    }
     // The footer the view draws is generic; these are the actions this run has.
     const footer = pill.querySelector('.footer');
     footer.textContent = '';
@@ -382,6 +431,21 @@ export function createOrchestrate({ dock, host, statusEl }) {
     footer.append(review);
     treeEl.append(pill);
   }
+
+  function escalateQuestion(q) {
+    if (!q) {
+      questionSince = null;
+      questionEl.classList.remove('is-esc-2', 'is-esc-3');
+      return;
+    }
+    if (questionSince == null) questionSince = q.at ?? Date.now();
+    const stage = escalationStage(Date.now() - questionSince);
+    questionEl.classList.toggle('is-esc-2', stage === 2);
+    questionEl.classList.toggle('is-esc-3', stage === 3);
+  }
+  questionEl.addEventListener('pointerenter', () => {
+    if (questionSince != null) questionSince = Date.now();
+  });
 
   // A worker's question, passed up by the orchestrator with its reason and
   // what it would suggest. Chips fill the reply; Send is the answer.

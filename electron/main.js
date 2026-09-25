@@ -112,7 +112,10 @@ function createWindow() {
     // Space. Without this the pill vanishes the moment the terminal it just
     // raised goes fullscreen, which is the one time you need it most.
     ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
-    webPreferences: { preload: join(here, 'preload.cjs'), sandbox: true },
+    // Never throttled: an overlay that Chromium decides is hidden (another
+    // Space, occluded) otherwise has its one-second tick stretched out, and a
+    // 2.6s "finished" line or an escalation step can be missed entirely.
+    webPreferences: { preload: join(here, 'preload.cjs'), sandbox: true, backgroundThrottling: false },
   });
 
   // Order matters on macOS: setVisibleOnAllWorkspaces resets the window level,

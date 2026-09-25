@@ -84,16 +84,21 @@ export function collapsedLine(run) {
   badgeWrap.append(badge(run.aggregate), el('div', 'count', String(run.activeWorkers)));
   line.append(badgeWrap);
 
-  if (run.repo) line.append(el('div', 'chip', run.repo));
-  line.append(el('div', 'prose', run.sentence));
-  line.append(taskStrip(run.tasks));
-  if (run.model) line.append(el('div', 'model', run.model));
+  // What the wheel turns: everything right of the mark except the clock.
+  const drum = el('div', 'drum');
+  const face = el('div', 'face');
+  if (run.repo) face.append(el('div', 'chip', run.repo));
+  face.append(el('div', 'prose', run.sentence));
+  face.append(taskStrip(run.tasks));
+  if (run.model) face.append(el('div', 'model', run.model));
+  drum.append(face);
+  line.append(drum);
   line.append(el('div', 'eta', run.time));
   return line;
 }
 
 function workerRow(worker) {
-  const row = el('div', `row row--worker${worker.state === 'queued' ? ' row--queued' : ''}`);
+  const row = el('div', `row row--worker${worker.state === 'queued' ? ' row--queued' : ''}${worker.flash ? ' row--flash' : ''}`);
   // Clicking a worker opens its log.
   row.dataset.worker = worker.id;
   row.append(badge(worker.state));

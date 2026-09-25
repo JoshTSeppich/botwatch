@@ -2,6 +2,8 @@
 // the DOM each second would drop hover and restart the pulse, and the spec is
 // strict about what is allowed to move.
 
+import { createRoller } from './motion.js';
+
 const STATE_CLASSES = ['is-working', 'is-waiting', 'is-errored', 'is-stalled', 'is-idle'];
 
 function el(tag, className, text) {
@@ -44,8 +46,17 @@ export function createStatusPill() {
   const rows = el('div', 'rows');
 
   badge.append(dot, count);
-  hdr.append(handle(), badge, chip, prose, model, divider, eta);
+  // Everything right of the status mark that the wheel turns: the chip, the
+  // sentence, the model. The clock sits outside it and ticks in place.
+  const drum = el('div', 'drum');
+  const face = el('div', 'face');
+  face.append(chip, prose, model);
+  drum.append(face);
+  hdr.append(handle(), badge, drum, divider, eta);
   pill.append(hdr, rows);
+  const roller = createRoller(drum);
+  // The roller keeps the face it turns; these find the live one each time.
+  const part = (cls) => drum.querySelector(`.face:not(.face--old) .${cls}`);
 
   let renderedIds = '';
   const rowNodes = new Map();
@@ -84,15 +95,24 @@ export function createStatusPill() {
 
     show(count, view.rows.length > 0);
     show(eta, view.rows.length > 0);
-    show(chip, Boolean(view.wide && view.repo));
-    show(model, Boolean(view.wide && view.model));
     show(divider, Boolean(view.wide && view.rows.length > 0));
-
     setText(count, String(view.rows.length));
-    setText(prose, view.notice ?? view.headline);
     setText(eta, view.eta ?? '');
-    setText(chip, view.repo ?? '');
-    setText(model, view.model ?? '');
+
+    // F6: an ignored question escalates the whole pill, never louder than a rim.
+    pill.classList.toggle('is-esc-2', view.escalation === 2);
+    pill.classList.toggle('is-esc-3', view.escalation === 3);
+
+    // What the line says turns the wheel; the same line ticks in place.
+    const sentence = view.notice ?? view.headline;
+    const key = JSON.stringify([view.state, sentence, view.wide && view.repo, view.wide && view.model]);
+    roller.change(key, () => {
+      show(part('chip'), Boolean(view.wide && view.repo));
+      show(part('model'), Boolean(view.wide && view.model));
+      setText(part('prose'), sentence);
+      setText(part('chip'), view.repo ?? '');
+      setText(part('model'), view.model ?? '');
+    });
 
     const ids = view.rows.map((r) => r.id).join('|');
     if (ids !== renderedIds) {

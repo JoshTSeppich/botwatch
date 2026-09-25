@@ -17,6 +17,7 @@ import {
 } from './model.js';
 import { createHost } from './host.js';
 import { wireClickThrough, wireDrag, wireExpand, wireMenu, wireRaise } from './interact.js';
+import { escalationStage } from './motion.js';
 import { createOrchestrate } from './orchestrate.js';
 import { createStatusPill, createUsagePill } from './render.js';
 
@@ -32,6 +33,12 @@ export function start(dock) {
   // process, so it lives here and not in the adapter.
   const dismissed = new Set();
   const stale = new Set();
+  // When the pill started needing you (a permission prompt or a question).
+  // Hovering the pill or raising a session counts as a response, per F6.
+  let needsSince = null;
+  const acknowledge = () => {
+    if (needsSince != null) needsSince = Date.now();
+  };
   let latest = { sessions: [], usage: null, terminal: {} };
 
   // Hover does not expand an empty pill, or one showing a notice: there is
@@ -56,6 +63,7 @@ export function start(dock) {
       paint();
     },
     onRaise: async (id) => {
+      acknowledge();
       const outcome = await host.raise(id);
       if (outcome === 'stale') {
         stale.add(id);
@@ -65,6 +73,7 @@ export function start(dock) {
     },
   });
 
+  status.el.addEventListener('pointerenter', acknowledge);
   wireMenu(status, host);
   wireMenu(usage, host);
   wireClickThrough(dock, host);
@@ -79,8 +88,13 @@ export function start(dock) {
   function paint() {
     const sessions = visible(latest, dismissed);
     const blocked = latest.permission && !latest.permission.ok;
+    const now = Date.now();
+    const needing = sessions.some((s) => s.state === 'waiting' && (s.needs === 'permission' || s.needs === 'question'));
+    if (!needing) needsSince = null;
+    else if (needsSince == null) needsSince = now;
+    const escalation = needing ? escalationStage(now - needsSince) : 0;
     status.update(
-      blocked ? noticeView() : statusView(sessions, latest, stale, Date.now()),
+      blocked ? noticeView() : { ...statusView(sessions, latest, stale, now), escalation },
     );
     // The usage pill is meaningless while blocked, and two pills saying nothing
     // is worse than one.

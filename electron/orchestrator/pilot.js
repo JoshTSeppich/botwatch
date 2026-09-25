@@ -289,6 +289,8 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     snapshot: w.snapshot ?? null,
     test: w.test ?? null,
     question: w.question ?? null,
+    // When its turn finished, for the 1.6s row flash and the 2.6s line.
+    finishedAt: w.state === 'done' ? w.doneAt ?? null : null,
   }));
   const q = run.pendingQuestion;
   const done = workers.filter((w) => TERMINAL.has(w.state)).length;
