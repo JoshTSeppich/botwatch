@@ -78,13 +78,22 @@ export const WORKER_BRIEF = [
   'Your task:',
 ].join('\n');
 
+// Said up front, so a worker that needs a package asks instead of spending its
+// turn on retries. The sandbox's own refusal names the host as well.
+export const NO_INSTALLS = [
+  'Package installs are off for this run: npm, PyPI and crates.io are unreachable, and the only',
+  'host you can reach is Anthropic\'s API. Use what is already installed. If the task cannot be',
+  "done without installing something, don't work around it: end your turn with 'QUESTION:' naming",
+  'the package and why, so the user can rerun with installs allowed.',
+].join('\n');
+
 // The worker's own words after "QUESTION:", or null.
 export function questionIn(text) {
   const match = /^\s*QUESTION:\s*(.+)$/im.exec(String(text ?? ''));
   return match ? match[1].trim() : null;
 }
 
-export function workerArgs({ model, permissionMode, protect = [] }) {
+export function workerArgs({ model, permissionMode, protect = [], allowInstalls = false }) {
   return [
     '-p',
     '--output-format',
@@ -99,7 +108,7 @@ export function workerArgs({ model, permissionMode, protect = [] }) {
     // The guard travels with every worker. Without it, permissionMode is the
     // only limit and a worker can merge its own branch.
     '--settings',
-    JSON.stringify(guardSettings({ protect })),
+    JSON.stringify(guardSettings({ protect, allowInstalls })),
   ];
 }
 
@@ -118,9 +127,10 @@ export class Worker extends EventEmitter {
     gitDir = null,
     brief = WORKER_BRIEF,
     extraArgs = [],
+    allowInstalls = false,
   }) {
     super();
-    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs });
+    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs, allowInstalls });
     this.state = 'queued';
     this.tokens = 0;
     this.sessionId = null;
@@ -135,7 +145,7 @@ export class Worker extends EventEmitter {
       env: guardedEnv(),
     });
     this.state = 'running';
-    this.message(`${this.brief}\n${this.task}`);
+    this.message(`${this.brief}${this.allowInstalls ? '' : `\n${NO_INSTALLS}`}\n${this.task}`);
 
     let buffer = '';
     this.child.stdout.on('data', (chunk) => {

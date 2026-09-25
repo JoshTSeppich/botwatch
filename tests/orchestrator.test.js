@@ -267,11 +267,9 @@ test('pilld will not merge before the user has clicked', async () => {
 
 test('spawned sessions are denied writes into the checkout being protected', () => {
   const settings = guardSettings({ protect: ['/Users/me/work/api'] });
-  assert.deepEqual(settings.permissions.deny, [
-    'Write(//Users/me/work/api/**)',
-    'Edit(//Users/me/work/api/**)',
-    'NotebookEdit(//Users/me/work/api/**)',
-  ]);
+  for (const rule of ['Write(//Users/me/work/api/**)', 'Edit(//Users/me/work/api/**)', 'NotebookEdit(//Users/me/work/api/**)']) {
+    assert.ok(settings.permissions.deny.includes(rule), rule);
+  }
 });
 
 test('the orchestrator runs somewhere other than the user checkout', () => {
@@ -435,4 +433,33 @@ test('the task strip gives one segment per task up to eight, then a bar', () => 
 test('the summarised bar reports the share of tasks finished', () => {
   const tasks = [...Array(6).fill({ state: 'done' }), ...Array(6).fill({ state: 'queued' })];
   assert.equal(stripPlan(tasks).fraction, 0.5);
+});
+
+test('every secret location is denied to the Read tool and to sandboxed Bash', async () => {
+  const { SECRET_PATHS } = await import('../electron/orchestrator/settings.js');
+  const s = guardSettings({ home: '/Users/me' });
+  for (const p of ['.ssh', '.aws', '.config/gcloud', '.azure', '.kube', '.docker/config.json', '.gnupg', '.netrc',
+    '.git-credentials', '.npmrc', '.pypirc', '.config/gh', 'Library/Keychains', 'Library/Application Support/Google/Chrome']) {
+    assert.ok(SECRET_PATHS.includes(p), p);
+    assert.ok(s.sandbox.filesystem.denyRead.includes(`/Users/me/${p}`), `sandbox: ${p}`);
+    assert.ok(s.permissions.deny.includes(`Read(//Users/me/${p}/**)`), `Read tool: ${p}`);
+  }
+});
+
+test('package registries are off unless the run allows installs, and the allowlist is strict', async () => {
+  const { BASE_DOMAINS, INSTALL_DOMAINS } = await import('../electron/orchestrator/settings.js');
+  const off = guardSettings({}).sandbox.network;
+  assert.deepEqual(off.allowedDomains, BASE_DOMAINS);
+  assert.equal(off.strictAllowlist, true);
+  assert.equal(off.allowedDomains.some((d) => /npm|pypi|crates/.test(d)), false);
+  const on = guardSettings({ allowInstalls: true }).sandbox.network;
+  assert.deepEqual(on.allowedDomains, [...BASE_DOMAINS, ...INSTALL_DOMAINS]);
+});
+
+test("a worker's settings carry the run's install choice", () => {
+  const settingsOf = (args) => JSON.parse(args[args.indexOf('--settings') + 1]);
+  const off = settingsOf(workerArgs({ model: 'haiku', permissionMode: 'acceptEdits' }));
+  const on = settingsOf(workerArgs({ model: 'haiku', permissionMode: 'acceptEdits', allowInstalls: true }));
+  assert.equal(off.sandbox.network.allowedDomains.includes('registry.npmjs.org'), false);
+  assert.equal(on.sandbox.network.allowedDomains.includes('registry.npmjs.org'), true);
 });

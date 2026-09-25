@@ -50,9 +50,10 @@ export class Run extends EventEmitter {
     budgetTokens = 1_000_000,
     permissionCeiling = 'default',
     testCommand = null,
+    allowInstalls = false,
   }) {
     super();
-    Object.assign(this, { repo, goal, model, permissionCeiling, testCommand });
+    Object.assign(this, { repo, goal, model, permissionCeiling, testCommand, allowInstalls });
     this.merges = [];
     this.limits = { maxWorkers };
     this.ledger = budget.createLedger(budgetTokens);
@@ -169,7 +170,7 @@ export class Run extends EventEmitter {
     const cwd = join(homedir(), '.claude', 'botwatch', 'runs', String(this.id ?? 'run'));
     return {
       cwd,
-      settings: guardSettings({ protect: [this.repo] }),
+      settings: guardSettings({ protect: [this.repo], allowInstalls: this.allowInstalls }),
       env: refguard.guardedEnv(),
       note: 'the orchestrator reads the repo through its workers, and never writes to it',
     };
@@ -285,6 +286,7 @@ export class Run extends EventEmitter {
       // A worker works in its worktree. The user's checkout is not its
       // business, and cwd is not a boundary.
       protect: [this.repo],
+      allowInstalls: this.allowInstalls,
     });
 
     worker.on('tokens', (_w, tokens) => {

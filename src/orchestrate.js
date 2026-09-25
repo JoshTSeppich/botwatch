@@ -153,6 +153,10 @@ export function createOrchestrate({ dock, host, statusEl }) {
     form.append(
       field('Test command', testInput, "Run on each worker's snapshot, sandboxed: no network, no writes outside its worktree."),
     );
+    const installs = chips('installs', ['off', 'on'], 'off');
+    form.append(
+      field('Package installs', installs.el, 'Off: workers reach Anthropic only. On: also npm, PyPI and crates.io.'),
+    );
     form.append(el('div', 'field__note', 'Each worker gets its own worktree and a branch under bw/.'));
 
     const error = el('div', 'panel__error');
@@ -174,6 +178,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
         budgetTokens: budget.get(),
         permissionCeiling: permission.get(),
         testCommand: testInput.value.trim() || null,
+        allowInstalls: installs.get() === 'on',
       });
       start.disabled = false;
       if (outcome?.error) error.textContent = outcome.error;

@@ -28,6 +28,7 @@ export const ORCHESTRATOR_BRIEF = (maxWorkers) =>
     "If a worker is asking (state 'asking', its question in the list), answer it with message_worker if the goal settles it.",
     'If it does not, call ask_human with the question, the worker id, why you are passing it up, and the answer you would suggest.',
     'ask_human returns the user\'s answer: send it to that worker with message_worker, then wait_for again. The other workers carry on meanwhile.',
+    'Do not finish while any worker is asking.',
     'You cannot edit files, run commands or merge. The user reviews every branch in the BotWatch pill and merges from there.',
     'Finish with one short line per worker saying what it did.',
     '',
@@ -53,6 +54,7 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       budgetTokens: config.budgetTokens,
       permissionCeiling: config.permissionCeiling,
       testCommand: config.testCommand || null,
+      allowInstalls: config.allowInstalls === true,
     });
     run.id = `${Date.now().toString(36)}`;
     await run.arm();
@@ -100,7 +102,11 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       if (run.budgetExhausted) run.pauseAll('budget');
       onChange();
     });
-    orchestrator.on('change', onChange);
+    orchestrator.on('change', () => {
+      relayQuestion(run, orchestrator);
+      nudge(run, orchestrator);
+      onChange();
+    });
     run.on('change', onChange);
 
     live = { run, token, orchestrator, startedAt: Date.now(), closed: false };
@@ -170,6 +176,36 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
 
+// Measured: instead of calling ask_human, an orchestrator ended its own turn
+// with 'QUESTION: …', the workers' convention. That is a question passed up
+// all the same, so it gets the same card, and the answer goes back to it.
+export function relayQuestion(run, orchestrator) {
+  if (orchestrator.state !== 'asking' || !orchestrator.question || run.pendingQuestion || run.stopped) return false;
+  if (orchestrator.relayed === orchestrator.question) return false;
+  orchestrator.relayed = orchestrator.question;
+  const worker = run.workers.find((w) => w.state === 'asking');
+  void run
+    .ask({ question: orchestrator.question, worker: worker?.id ?? null, reason: 'the orchestrator could not settle it itself' })
+    .then((reply) => {
+      if (reply?.answer != null) orchestrator.message(`The user answered: ${reply.answer}`);
+    });
+  return true;
+}
+
+// Measured: an orchestrator finished its turn with a worker still asking,
+// and the question never reached the user. Its turn ending is the moment to
+// catch that. One reminder per question, through the orchestrator, because
+// worker questions are the orchestrator's to answer or pass up.
+export function nudge(run, orchestrator) {
+  if (orchestrator.state !== 'done' || run.pendingQuestion || run.stopped) return false;
+  const asking = run.workers.find((w) => w.state === 'asking' && w.question && w.nudged !== w.question);
+  if (!asking) return false;
+  asking.nudged = asking.question;
+  return orchestrator.message(
+    `Worker ${asking.id} is still asking: "${asking.question}". Answer it with message_worker, or pass it up with ask_human. Then wait_for again. Do not finish while a worker is asking.`,
+  );
+}
+
 // Everything the tree and the review button need, as plain data. Pure, so the
 // sentence and the readiness rule are testable without a process.
 export function runView({ run, orchestrator, startedAt, closed }, now) {
@@ -201,6 +237,7 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     goal: run.goal,
     model: run.model,
     testCommand: run.testCommand,
+    allowInstalls: run.allowInstalls,
     stopped: run.stopped,
     orchestrator: {
       state: q ? 'waiting' : orchestrator.state === 'running' ? 'working' : orchestrator.state,

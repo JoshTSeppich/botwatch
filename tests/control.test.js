@@ -192,3 +192,36 @@ test('stopping the run releases a question nobody will answer', async () => {
   assert.deepEqual(await asked, { error: 'the run was stopped' });
   dispose(run);
 });
+
+test('an orchestrator that finishes with a worker still asking is reminded, once per question', async () => {
+  const { nudge } = await import('../electron/orchestrator/pilot.js');
+  const run = fakeRun();
+  const sent = [];
+  const orchestrator = { state: 'done', message: (t) => { sent.push(t); return true; } };
+  run.workers.push({ id: 'w2', state: 'asking', question: 'Can I install left-pad?' });
+  assert.equal(nudge(run, orchestrator), true);
+  assert.match(sent[0], /w2 is still asking: "Can I install left-pad\?"/);
+  assert.equal(nudge(run, orchestrator), false, 'not twice for the same question');
+  run.workers[0].question = 'A different question';
+  assert.equal(nudge(run, orchestrator), true, 'a new question gets its own reminder');
+  orchestrator.state = 'running';
+  run.workers[0].question = 'Third';
+  assert.equal(nudge(run, orchestrator), false, 'only when its turn has ended');
+  dispose(run);
+});
+
+test("an orchestrator's own QUESTION: reaches the pill, and the answer goes back to it", async () => {
+  const { relayQuestion } = await import('../electron/orchestrator/pilot.js');
+  const run = fakeRun();
+  const sent = [];
+  const orchestrator = { state: 'asking', question: 'Rerun with installs allowed?', message: (t) => { sent.push(t); return true; } };
+  run.workers.push({ id: 'w2', state: 'asking', question: 'need left-pad' });
+  assert.equal(relayQuestion(run, orchestrator), true);
+  assert.equal(run.pendingQuestion.question, 'Rerun with installs allowed?');
+  assert.equal(run.pendingQuestion.worker, 'w2');
+  assert.equal(relayQuestion(run, orchestrator), false, 'one card per question');
+  run.answer('no, drop the pad task');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(sent, ['The user answered: no, drop the pad task']);
+  dispose(run);
+});
