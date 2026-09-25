@@ -85,6 +85,17 @@ which at the spec's own 216px-per-34-characters is 45 characters, so the 46-char
 fits instead of ellipsising early. 440 survives only where the spec uses it for something else:
 the prompt field and the ⌥⌘J permission line.
 
+## The wheel turns on a change, not all the time
+
+The two references disagree. `Status Pill.dc.html` (section E) draws a wheel that turns without
+stopping, cycling through every session, easing to a stop on one that is waiting for you. The
+BotWatch README turns it only when what the line says changes — sentence, repo, model, status,
+never the clock — at most once every 1.6s. I followed the README: it governs rules, and a pill
+that is always moving draws the eye when nothing has happened, which is the one thing a monitor
+must not do. The projection is the spec's, per line: `translateY(−R·sin θ) scaleY(cos θ)`,
+opacity `cos^2.2 θ`, R = 18px, the new line over the top; a turn takes 420ms (the spec gives no
+duration), and reduced motion gets a 120ms crossfade. `src/motion.js`.
+
 ## Read next
 
 - `src/format.js` — every number-to-text rule, pure.

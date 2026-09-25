@@ -230,7 +230,26 @@ resumed session opened on the worker's conversation. Found on the way:
   sandbox auto-allow covers plain commands and pipes, not that.
 - The orchestrator's `O` is in the sans font now.
 
-Then motion, last. The demo re-record waits for it.
+**Motion: done** (`src/motion.js`, `tests/motion.test.js`). Each part was checked live in the app:
+- **The wheel.** It turns the content right of the status mark, in the v1 pill and in the
+  orchestrator line, whose header now outlives the tree's rebuilds so it can turn. It turns only
+  on a change of meaning, and at most every 1.6s (unit tests, with a fake clock). Live, frame by
+  frame: the new line starts at `translateY(-18px) scaleY(0)` and the old one drops and fades.
+  Reduced motion is a 120ms crossfade with no transforms (tested). Why "on change" and not the
+  spec sheet's continuous wheel: design-notes.
+- **Finished.** "w1 finished: <task>" with a ✓ for 2.6s, and a 1.6s row flash. Live: the flash at
+  18.77s, the line at 18.79s, and back to "Ready to review" at 21.77s.
+- **Escalation (F6).** Only for a real "needs you" (a permission or a question), not a finished
+  turn. On the pill and on the question card. Live, with a real permission prompt left waiting:
+  ~5s stage 1 (2s pulse); ~35s stage 2 (1.2s pulse, amber border at 45%); 2m15s stage 3 (amber
+  border and rim). A `pointerenter` reset it to stage 1. That was dispatched in the page:
+  synthetic mouse moves didn't reach the overlay then, likely because it wasn't on the front Space.
+- **Found:** Chromium throttled the overlay's timers while it counted as hidden, which stretches
+  the one-second tick and could swallow the 2.6s line. The window now sets
+  `backgroundThrottling: false`.
+
+Next: re-record the README demo on the real product (question answered from the pill, flagged
+files refusing to merge, a selective merge, a clean conflict abort).
 
 ## How the code is arranged
 
