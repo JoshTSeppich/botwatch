@@ -553,3 +553,23 @@ test("the host follows the power monitor's suspend and resume", async () => {
   await host.close();
   assert.equal(power.listenerCount('suspend'), 0);
 });
+
+test('every tool call of a fleet worker needs a live session and lease; writes also need the claim', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 1 });
+  f.orchestrators.get('O1').run.cwd = '/wt/w1';
+  await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
+  await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' });
+  assert.equal(f.mayUse('O1/w1').ok, true);
+  assert.equal(f.mayUse('O1/w9').ok, false);
+  f.advance(61_000);
+  assert.match(f.mayUse('O1/w1').reason, /expired/);
+});
+
+test('the enforcement hook runs on every tool, fail-closed', async () => {
+  const { guardSettings } = await import('../electron/orchestrator/settings.js');
+  const s = guardSettings({ enforce: { socket: '/x', session: 'O1/w1' } });
+  const hook = s.hooks.PreToolUse.find((h) => /enforce\.mjs/.test(h.hooks[0].command));
+  assert.equal(hook.matcher, '*');
+  assert.match(hook.hooks[0].command, /\|\| exit 2$/);
+});

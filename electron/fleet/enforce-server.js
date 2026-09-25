@@ -1,5 +1,5 @@
-// pilld's side of the enforcement hook: one question, "may this session
-// write this path?", answered from the fleet's live state. Read-only: it
+// pilld's side of the enforcement hook: "may this session use a tool?" and
+// "may it write this path?", answered from the fleet's live state. Read-only: it
 // changes nothing, so a forged question gets an answer and nothing more.
 // 0600 in BotWatch's own directory, where a worker's sandbox can't reach.
 
@@ -22,7 +22,7 @@ export async function serveEnforcement(fleetOf, path) {
       try {
         const q = JSON.parse(pending.slice(0, cut));
         const fleet = fleetOf();
-        answer = fleet ? fleet.mayWrite(q.session, q.path) : { ok: false, reason: 'no fleet is running' };
+        answer = !fleet ? { ok: false, reason: 'no fleet is running' } : q.path ? fleet.mayWrite(q.session, q.path) : fleet.mayUse(q.session);
       } catch (err) {
         answer = { ok: false, reason: `could not decide: ${String(err?.message ?? err)}` };
       }

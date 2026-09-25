@@ -130,9 +130,11 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
         ...(enforce
           ? [
               {
-                matcher: 'Write|Edit|MultiEdit|NotebookEdit',
-                // Its own deadline (2s) is under this timeout: a hook that is
-                // timed out lets the call through.
+                // Every tool: a session whose pilld is gone, or whose lease
+                // isn't live, can do nothing more. Writes are also checked
+                // against the claims. Its own deadline (2s) is under this
+                // timeout: a hook that is timed out lets the call through.
+                matcher: '*',
                 hooks: [{ type: 'command', command: `${scriptShellCommand(new URL('./enforce.mjs', import.meta.url))} || exit 2`, timeout: 10 }],
               },
             ]

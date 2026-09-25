@@ -1,7 +1,10 @@
 #!/usr/bin/env node
-// PreToolUse enforcement hook for the sessions a v4 fleet starts: may this
-// session write this path? Asked of pilld, live, so a claim made after the
-// session started still holds.
+// PreToolUse enforcement hook for the sessions a v4 fleet starts, on every
+// tool call: may this session use a tool at all (it is known and its lease
+// is live), and for a file write, may it write this path? Asked of pilld,
+// live, so a claim made after the session started still holds, and so a
+// session whose pilld has died can do nothing more (measured: without this,
+// orphaned workers went on writing through Bash after pilld was killed).
 //
 // Separate from bw-hook, which only reports and stays fail-open for the
 // user's own sessions. This one refuses whenever it can't get a yes:
@@ -38,8 +41,9 @@ process.stdin.on('end', () => {
   const session = process.env.BOTWATCH_SESSION;
   if (!socket || !session) refuse('this session has no BotWatch identity');
   const input_ = event?.tool_input ?? {};
-  const path = input_.file_path ?? input_.notebook_path ?? null;
-  if (!path) refuse(`${event?.tool_name ?? 'this tool'} named no file`);
+  const writes = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(event?.tool_name);
+  const path = writes ? (input_.file_path ?? input_.notebook_path ?? null) : null;
+  if (writes && !path) refuse(`${event?.tool_name} named no file`);
 
   const conn = connect(socket);
   let reply = '';
