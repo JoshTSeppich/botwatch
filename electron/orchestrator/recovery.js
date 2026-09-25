@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { processStart, sameStart } from './proc.js';
 import * as refguard from './refguard.js';
 
 const execFile = promisify(execFileCb);
@@ -44,8 +45,26 @@ export function runRecord(run, { owner = process.pid, closed = false, orchestrat
   };
 }
 
-export async function writeRecord(dir, record) {
-  await writeFile(join(dir, 'run.json'), JSON.stringify(record, null, 2), { mode: 0o600 });
+// pid -> start time, for this process's own children and itself. Looked up
+// once: a process's start time never changes, and a record is written often.
+const starts = new Map();
+async function startOf(pid) {
+  if (!pid) return null;
+  if (!starts.has(pid)) starts.set(pid, await processStart(pid));
+  return starts.get(pid);
+}
+
+// The record carries each pid's start time, so a later recovery can tell the
+// process it recorded from a stranger that was given the same pid.
+export async function writeRecord(dir, record, { lookup = startOf } = {}) {
+  const withStarts = {
+    ...record,
+    ownerStart: record.ownerStart ?? (await lookup(record.owner)),
+    workers: await Promise.all(
+      (record.workers ?? []).map(async (w) => ({ ...w, start: w.start ?? (await lookup(w.pid)) })),
+    ),
+  };
+  await writeFile(join(dir, 'run.json'), JSON.stringify(withStarts, null, 2), { mode: 0o600 });
 }
 
 function alive(pid) {
@@ -61,6 +80,16 @@ function alive(pid) {
 async function isClaude(pid) {
   const { stdout } = await execFile('ps', ['-o', 'command=', '-p', String(pid)]).catch(() => ({ stdout: '' }));
   return /^(\S*\/)?claude(\s|$)/.test(stdout.trim());
+}
+
+// The only processes recovery signals: alive, still claude, and started at the
+// moment the record says. A pid that is claude but started at another time is
+// somebody else's session — possibly the user's own — and is left alone. So is
+// one with no recorded start: not knowing is a reason not to kill.
+export async function isOurs(pid, recordedStart, { isAliveFn = alive, claude = isClaude, lookup = processStart } = {}) {
+  if (!pid || !recordedStart || !isAliveFn(pid)) return false;
+  if (!sameStart(await lookup(pid), recordedStart)) return false;
+  return claude(pid);
 }
 
 // Worktrees git lists as prunable (directory gone) are pruned only when every
@@ -80,7 +109,7 @@ async function pruneOurs(repo) {
   return prunable;
 }
 
-export async function recover({ runsDir = RUNS_DIR, self = process.pid, isAlive = alive } = {}) {
+export async function recover({ runsDir = RUNS_DIR, self = process.pid, isAlive = alive, claude = isClaude, lookup = processStart } = {}) {
   const reports = [];
   for (const id of await readdir(runsDir).catch(() => [])) {
     const dir = join(runsDir, id);
@@ -88,24 +117,35 @@ export async function recover({ runsDir = RUNS_DIR, self = process.pid, isAlive 
       .then(JSON.parse)
       .catch(() => null);
     if (!record || record.closed || record.recoveredAt) continue;
-    if (record.owner === self || isAlive(record.owner)) continue;
+    if (record.owner === self) continue;
+    // The owner counts as alive only if it is the same process: its pid may
+    // belong to something else by now. Without a recorded start, a live pid is
+    // given the benefit of the doubt, and the run is left for later.
+    if (isAlive(record.owner)) {
+      if (!record.ownerStart) continue;
+      if (sameStart(await lookup(record.owner), record.ownerStart)) continue;
+    }
 
     const stopped = [];
+    const spared = [];
     for (const w of record.workers ?? []) {
-      if (w.pid && isAlive(w.pid) && (await isClaude(w.pid))) {
-        try {
-          process.kill(w.pid, 'SIGTERM');
-          stopped.push(w.id);
-        } catch {
-          // Gone between the check and the kill: nothing to stop.
-        }
+      if (!w.pid || !isAlive(w.pid)) continue;
+      if (!(await isOurs(w.pid, w.start, { isAliveFn: isAlive, claude, lookup }))) {
+        spared.push(w.id);
+        continue;
+      }
+      try {
+        process.kill(w.pid, 'SIGTERM');
+        stopped.push(w.id);
+      } catch {
+        // Gone between the check and the kill: nothing to stop.
       }
     }
     const hookRemoved = await refguard.uninstall(record.repo).catch(() => false);
     const pruned = await pruneOurs(record.repo).catch(() => []);
     const kept = (record.workers ?? []).map((w) => w.branch).filter(Boolean); // the orchestrator has none
 
-    const report = { id: record.id, repo: record.repo, stopped, hookRemoved, pruned, kept };
+    const report = { id: record.id, repo: record.repo, stopped, spared, hookRemoved, pruned, kept };
     await writeRecord(dir, { ...record, recoveredAt: Date.now(), recovery: report });
     reports.push(report);
   }

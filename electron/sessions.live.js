@@ -26,6 +26,7 @@ import { promisify } from 'node:util';
 
 import { firstSentence, phrase } from './orchestrator/phrase.js';
 import { createRegistry, STALL_AFTER_MS } from './registry.js';
+import { processStart, sameStart } from './orchestrator/proc.js';
 
 const run = promisify(execFile);
 const CLAUDE = join(homedir(), '.claude');
@@ -117,20 +118,9 @@ export async function sameProcess(pid, procStart, lstart = processStart) {
   const key = `${pid}:${procStart}`;
   if (!identity.has(key)) {
     const actual = await lstart(pid);
-    identity.set(key, actual == null || normalise(actual) === normalise(procStart));
+    identity.set(key, actual == null || sameStart(actual, procStart));
   }
   return identity.get(key);
-}
-
-function normalise(text) {
-  return String(text).trim().replace(/\s+/g, ' ');
-}
-
-async function processStart(pid) {
-  const { stdout } = await run('ps', ['-o', 'lstart=', '-p', String(pid)], {
-    env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' },
-  }).catch(() => ({ stdout: '' }));
-  return stdout.trim() || null;
 }
 
 function alive(pid) {

@@ -3,14 +3,15 @@
 // tools/it-recovery.mjs, which spends tokens.
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import * as refguard from '../electron/orchestrator/refguard.js';
-import { recover } from '../electron/orchestrator/recovery.js';
+import { isOurs, recover, writeRecord } from '../electron/orchestrator/recovery.js';
+import { processStart } from '../electron/orchestrator/proc.js';
 import { Run } from '../electron/orchestrator/run.js';
 
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
@@ -72,6 +73,7 @@ test('recover never kills a live pid that is not claude', async () => {
   record(runsDir, 'reused', { repo: r, owner: 999_005, workers: [{ id: 'w1', branch: 'bw/x', pid: process.pid }] });
   const reports = await recover({ runsDir, self: 1, isAlive: (pid) => pid === process.pid });
   assert.deepEqual(reports[0].stopped, []);
+  assert.deepEqual(reports[0].spared, ['w1']);
 });
 
 test("recover prunes a BotWatch worktree whose folder is gone, but not a user's", async () => {
@@ -111,4 +113,80 @@ test('a leftover index.lock stops the merge with a message that says what it is'
   const out = await run.merge({ reviewed: [{ branch: 'bw/w1-task', sha }] });
   assert.match(out.error, /git is locked: .*index\.lock exists/);
   clearInterval(run.reaper);
+});
+
+// A real process to point records at: alive, and not ours to lose.
+function sleeper() {
+  const child = spawn('sleep', ['60']);
+  return child;
+}
+const alivePid = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test('a pid that is alive and is claude but started later is left alone', async () => {
+  const { root, repo: r } = repo();
+  const target = sleeper();
+  await new Promise((res) => setTimeout(res, 200));
+  const runsDir = join(root, 'runs');
+  // The record says w1 started a year ago; this pid started just now.
+  record(runsDir, 'reused', {
+    repo: r,
+    owner: 999_010,
+    ownerStart: 'Mon Jan 1 00:00:00 2024',
+    workers: [{ id: 'w1', branch: 'bw/w1', pid: target.pid, start: 'Mon Jan 1 00:05:00 2024' }],
+  });
+  const reports = await recover({ runsDir, self: 1, isAlive: alivePid, claude: async () => true });
+  assert.deepEqual(reports[0].stopped, []);
+  assert.deepEqual(reports[0].spared, ['w1']);
+  assert.equal(alivePid(target.pid), true, 'still running');
+  target.kill();
+});
+
+test('the same pid with the recorded start time is stopped', async () => {
+  const { root, repo: r } = repo();
+  const target = sleeper();
+  await new Promise((res) => setTimeout(res, 200));
+  const runsDir = join(root, 'runs');
+  record(runsDir, 'ours', {
+    repo: r,
+    owner: 999_011,
+    workers: [{ id: 'w1', branch: 'bw/w1', pid: target.pid, start: await processStart(target.pid) }],
+  });
+  const exited = new Promise((res) => target.on('exit', res));
+  const reports = await recover({ runsDir, self: 1, isAlive: alivePid, claude: async () => true });
+  assert.deepEqual(reports[0].stopped, ['w1']);
+  await exited;
+});
+
+test('with no recorded start time, nothing is signalled', async () => {
+  const target = sleeper();
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(await isOurs(target.pid, null, { claude: async () => true }), false);
+  target.kill();
+});
+
+test("a live owner pid with a different start time is not the owner: the run is recovered", async () => {
+  const { root, repo: r } = repo();
+  const stranger = sleeper();
+  await new Promise((res) => setTimeout(res, 200));
+  const runsDir = join(root, 'runs');
+  record(runsDir, 'orphan', { repo: r, owner: stranger.pid, ownerStart: 'Mon Jan 1 00:00:00 2024', workers: [] });
+  const reports = await recover({ runsDir, self: 1, isAlive: alivePid });
+  assert.deepEqual(reports.map((x) => x.id), ['orphan']);
+  assert.equal(alivePid(stranger.pid), true, 'the stranger holding the old owner pid is untouched');
+  stranger.kill();
+});
+
+test('the record written for a run carries each pid\'s start time', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bw-rec-write-'));
+  await writeRecord(dir, { id: 'x', owner: process.pid, workers: [{ id: 'w1', pid: process.pid }] });
+  const written = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
+  assert.equal(written.ownerStart, await processStart(process.pid));
+  assert.equal(written.workers[0].start, await processStart(process.pid));
 });

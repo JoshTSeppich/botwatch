@@ -15,6 +15,8 @@
 //   3. a session file whose pid now belongs to another process is ignored.
 //   4. a merge after a git process was killed mid-write (index.lock) is
 //      refused with a message that says so, and works once the lock is gone.
+//   5. a real claude session holding a pid a dead run recorded, but started
+//      later, is left alone: recovery never signals a process it didn't start.
 
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -89,7 +91,10 @@ async function scenarioKilledHost() {
   await sleep(8000); // well into the loop
   const workers = last?.workers ?? [];
   const pids = workers.map((w) => w.pid).filter(Boolean);
-  check('two workers running before the kill', workers.filter((w) => w.state === 'running').length === 2, JSON.stringify(workers.map((w) => [w.id, w.state, w.pid])));
+  // What the scenario needs is sessions mid-turn when the host dies. Haiku
+  // sometimes skips the slow loop and finishes a worker early, so this asks
+  // for at least one running worker rather than exactly two.
+  check('workers mid-turn before the kill', workers.some((w) => w.state === 'running'), JSON.stringify(workers.map((w) => [w.id, w.state, w.pid])));
 
   host.kill('SIGKILL');
   await sleep(1000);
@@ -187,10 +192,43 @@ async function scenarioLockedMerge() {
   clearInterval(run.reaper);
 }
 
+async function scenarioReusedPid() {
+  console.log('\n5. a live claude session holding a recorded pid, started later');
+  const { root, repo } = scratchRepo();
+  // An idle headless session: alive, genuinely claude, and waiting on stdin,
+  // so it spends nothing.
+  const session = spawn('claude', ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], {
+    cwd: repo,
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  await sleep(1500);
+  const runsDir = join(root, 'runs');
+  mkdirSync(join(runsDir, 'old'), { recursive: true });
+  writeFileSync(
+    join(runsDir, 'old', 'run.json'),
+    JSON.stringify({
+      id: 'old',
+      repo,
+      owner: 999_123,
+      ownerStart: 'Mon Jan 1 00:00:00 2024',
+      workers: [{ id: 'w1', branch: 'bw/w1', pid: session.pid, start: 'Mon Jan 1 00:05:00 2024' }],
+    }),
+  );
+  const cmd = execFileSync('ps', ['-o', 'command=', '-p', String(session.pid)], { encoding: 'utf8' }).trim();
+  check('the pid is a live claude process', alive(session.pid) && /^claude\b/.test(cmd), cmd.slice(0, 60));
+  const [report] = await recover({ runsDir });
+  console.log(`  recover(): stopped=${JSON.stringify(report?.stopped)} spared=${JSON.stringify(report?.spared)}`);
+  await sleep(1500);
+  check('recovery left it alone', alive(session.pid) && (report?.spared ?? []).includes('w1') && (report?.stopped ?? []).length === 0);
+  session.stdin.end();
+  session.kill();
+}
+
 console.log(`runs are recorded in ${RUNS_DIR}`);
 await scenarioKilledHost();
 await scenarioCrashedWorker();
 await scenarioStaleSession();
 await scenarioLockedMerge();
+await scenarioReusedPid();
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
