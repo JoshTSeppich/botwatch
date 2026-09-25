@@ -39,11 +39,22 @@ await new Promise((res) => setTimeout(res, 8000));
 
 const after = await count();
 console.log('  live claude workers after reap:', after, '(was', before, 'before the run)');
+// Counting every `claude -p` on the machine is only a hint: another session
+// can start or end meanwhile. What must hold is that none of this run's own
+// worker processes is still alive.
+const alive = r.workers.filter((w) => {
+  try {
+    return w.child?.pid && (process.kill(w.child.pid, 0), true);
+  } catch {
+    return false;
+  }
+});
+console.log('  this run\'s worker processes still alive:', alive.length);
 
 const stranded = r.workers.find((w) => w.doneAt === null && w.child?.stdin.writable === false);
 console.log('  message to a released worker:', JSON.stringify(stranded ? stranded.message('hello') : 'n/a'));
 
-assert.equal(after, before, 'no worker processes should survive the reap');
+assert.equal(alive.length, 0, 'no worker process of this run should survive the reap');
 console.log('  PASS');
 r.close();
 process.exit(0);
