@@ -486,3 +486,29 @@ test("adoption is refused when the run's budget doesn't fit what's left", async 
   run.ledger.spent = 0;
   assert.match(f.adopt({ run, session: new FakeSession({}), token: 't' }).error, /can't adopt/);
 });
+
+// ---- recovery after pilld is killed ---------------------------------------------
+
+test("the host records the hypervisor and every orchestrator for recovery, and recover() handles them", async () => {
+  const { createFleetHost } = await import('../electron/fleet/host.js');
+  const { recover } = await import('../electron/orchestrator/recovery.js');
+  const { readdirSync, readFileSync: read } = await import('node:fs');
+  const runsDir = mkdtempSync(join(tmpdir(), 'bw-fleet-runs-'));
+  const host = createFleetHost({ controlPath: '/tmp/unused-c.sock', enforcePath: '/tmp/unused-e.sock', runsDir });
+  let pid = 90_000;
+  const session = (opts) => Object.assign(new FakeSession(opts), { child: { pid: pid++ } });
+  await host.start({ id: 'rec', goals: [{ id: 'g1', goal: 'x', repo: '/r', priority: 1 }], budgetTokens: 100_000, maxSessions: 4, dir: mkdtempSync(join(tmpdir(), 'bw-fleet-')), session, run: (o) => new FakeRun(o) });
+  await host.fleet.callHypervisor('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 1, expires: 60 });
+  await new Promise((r) => setTimeout(r, 700));
+  const dirs = readdirSync(runsDir).sort();
+  assert.deepEqual(dirs, ['rec-H', 'rec-O1']);
+  const hv = JSON.parse(read(join(runsDir, 'rec-H', 'run.json'), 'utf8'));
+  assert.equal(hv.workers[0].id, 'H');
+  assert.equal(hv.workers[0].pid, 90_000);
+  // A later launch finds them: nothing is alive, so nothing is signalled,
+  // and the hypervisor's record (no repo) is handled like any other.
+  const reports = await recover({ runsDir, self: -1, isAlive: () => false });
+  assert.deepEqual(reports.map((r) => r.id).sort(), ['rec-H', 'rec-O1']);
+  host.fleet.stop();
+  await host.fleet.close();
+});
