@@ -357,3 +357,10 @@ Anything that must be right is a pure function with a test: `stripPlan`, `badgeT
 Integration scripts in `tools/` spend real tokens and need a logged-in CLI, so they are **not** in
 `npm test`: `smoke-worker`, `it-spawn`, `it-waitfor`, `it-message`, `it-diff`, `it-mcp`, `it-reap`,
 `it-recovery` (with its host, `it-recovery-host`), `it-pause`, `it-escape`, `it-snapshot`.
+
+Before 0.3.2 shipped these passed against the real CLI: `it-spawn`, `it-diff`, `it-message`,
+`it-recovery`, `it-pause`, `it-escape`, `it-snapshot`. Three are stale and fail the same way on
+v0.3.1 as on 0.3.2, so they are not regressions, but they need rewriting: `it-mcp` launches
+`mcp.js` with a `BOTWATCH_RUN` env that the relay no longer reads (the run lives in pilld now);
+`it-waitfor` gets "BotWatch closed the connection" for the same reason; `smoke-worker` reports
+`state: done` and still exits 1.
