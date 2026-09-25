@@ -138,6 +138,14 @@ and Merge refuses until you tick each one by name. What merges is the exact comm
 if a worker ran again since, Merge refuses and asks you to look again. Each branch lands as its own
 `--no-ff` merge naming the worker and the commit. Nothing is ever pushed.
 
+Click a worker to open its log beside the card: every command it ran, the last lines of what came
+back (refusals in red), and what it said. **Take over** hands that worker to you. BotWatch stops
+it, opens the same Claude Code session in Terminal in its worktree, and from then on the
+orchestrator leaves it alone and the pill won't merge it: the branch is yours to finish. Taking
+over also marks that worktree trusted in Claude Code, which is why the session opens on the
+conversation rather than on "Is this a project you trust?". The resumed session is yours in
+every sense. It runs under your own settings and permission mode, **not** the worker's sandbox.
+
 ## What stops a worker touching your work
 
 The long version, with every measurement, is [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).

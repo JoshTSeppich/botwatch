@@ -214,7 +214,23 @@ refused naming both; acknowledged, merged; w1 merged separately; w2 then conflic
 app showed "conflicts with what is already on your branch in src/greet.js, test/greet.test.js.
 Nothing was changed."
 
-Then the worker log panel, and motion — in that order, last.
+**Worker log panel: done.** Clicking a worker opens a 300px log beside the card, polled once a
+second by sequence number (`electron/orchestrator/log.js`, capped at 400 entries). **Take over**
+takes two clicks. It stops the headless worker and waits for it to exit, marks the worktree trusted
+in `~/.claude.json` (one key, re-read, temp file plus rename, and never written if the file won't
+parse), then opens `claude --resume <session>` in Terminal in the worktree. After that,
+`message_worker` and `stop_worker` refuse it and the merge gate refuses it. Proven live: the
+resumed session opened on the worker's conversation. Found on the way:
+- Without the trust key, the resumed session stops at "Is this a project you trust?" for a
+  worktree nobody opened interactively. The user chose pre-trust on Take over.
+- The resumed session runs under the user's own settings (here, bypass), not the worker's
+  sandbox. That's what taking over means, and the README says so.
+- Headless workers get compound commands with command substitution refused: `for i in $(seq 1
+  200); do npm test; done` gave "The following parts require approval: seq 1 200, npm test". The
+  sandbox auto-allow covers plain commands and pipes, not that.
+- The orchestrator's `O` is in the sans font now.
+
+Then motion, last. The demo re-record waits for it.
 
 ## How the code is arranged
 
