@@ -70,3 +70,11 @@ Pill: subagents never add top-level rows or segments. In the expanded tree, a wo
 Phasing: v5a is visible helpers only. v5b adds forked subagents. v5c lets the hypervisor tune depth and fan-out from each orchestrator's history.
 
 Not in scope: unlimited depth, subagents that contact people/Slack/email, and subagents working outside their worker's repo or path claim.
+
+## Rulings (after the step 0 measurements)
+Decided after measuring the current Claude Code. The numbers behind them are in THREAT-MODEL.md.
+- **Leases.** Grants are exact: pilld refuses any grant that would push the total over budget. Spending isn't: pilld counts tokens as they're reported and stops a session when its lease is spent, so a run can overrun by one step per running session. That overrun is documented, not hidden. To keep a step small, the enforcement hook caps the size of a Read and the number of Reads in parallel.
+- **Path claims.** Orchestrators claim paths before they spawn workers, so each worker's claim is a settings deny at spawn (prevented, for tools and Bash alike). A claim made after a worker has started is enforced by the hook for Write and Edit, and by detection (a diff of the worktree) for Bash.
+- **Enforcement hooks.** They are separate from the monitoring hook. bw-hook stays fail-open for the user's own sessions. Hooks that enforce v4/v5 limits run only on sessions BotWatch spawns, and refuse when pilld is unreachable. Each runs as `node hook.mjs || exit 2`, so a crash refuses, and each has its own deadline under Claude Code's hook timeout, so a slow answer refuses. The gap that remains: if Claude Code kills a hook at its timeout (a stalled machine), the call goes through. Wherever a limit can be a settings deny at spawn, it is one, so no limit rests on a hook alone where that can be avoided.
+- **The hypervisor never reads worker transcripts.** That is a settings deny at spawn (the Read tool and the sandbox), not an instruction in its prompt.
+- **Stop propagation.** Whether interrupting or stopping a worker also stops its background helpers is measured in v5a, before anything relies on it.
