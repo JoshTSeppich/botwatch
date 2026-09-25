@@ -156,7 +156,7 @@ test('attack: workers before a claim, and a claim that overlaps another', async 
   await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
   assert.match((await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' })).error, /claim your paths/);
   assert.deepEqual((await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/ui/**'] })).granted, ['src/ui/**']);
-  const waiting = await f.callOrchestrator('O2', 'claim_paths', { paths: ['src/**'] });
+  const waiting = f.claimPaths('O2', ['src/**']);
   assert.equal(waiting.waiting, 'c1');
   assert.match((await f.callOrchestrator('O2', 'spawn_worker', { task: 'b' })).error, /waiting on a conflict/);
   assert.match((await f.callOrchestrator('O2', 'claim_paths', { paths: ['/etc/**'] })).error, /repo-relative/);
@@ -172,7 +172,7 @@ test('a sequenced claim waits until the holder finishes, then is granted', async
   await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
   await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
   await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
-  await f.callOrchestrator('O2', 'claim_paths', { paths: ['src/api/**'] });
+  f.claimPaths('O2', ['src/api/**']);
   await hv('resolve_lock', { conflict: 'c1', decision: 'sequence' });
   assert.equal(f.orchestrators.get('O2').claim.state, 'waiting');
   f.release('O1');
@@ -584,4 +584,32 @@ test('wait_for returns when pilld pauses a worker for writing outside its claim,
   run.workers[0].claimViolations = ['test-write.txt'];
   run.emit('change');
   assert.deepEqual((await waiting)[0].outsideClaim, ['test-write.txt']);
+});
+
+test('claim_paths waits for a conflict to be resolved, then returns the granted claim', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
+  let done = null;
+  const pending = f.callOrchestrator('O2', 'claim_paths', { paths: ['src/**'] }).then((r) => (done = r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(done, null, 'still waiting');
+  await hv('resolve_lock', { conflict: 'c1', decision: 'sequence' });
+  assert.equal(done, null, 'sequenced: waits for O1');
+  f.release('O1');
+  await pending;
+  assert.deepEqual(done.granted, ['src/**']);
+});
+
+test("a released claim is not denied to the next orchestrator's workers", async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  f.claimPaths('O1', ['src/greet.js']);
+  f.claimPaths('O2', ['src/greet.js']);
+  await hv('resolve_lock', { conflict: 'c1', decision: 'sequence' });
+  f.release('O1');
+  assert.equal(f.orchestrators.get('O2').claim.state, 'granted');
+  assert.deepEqual(f.orchestrators.get('O2').run.workerOptions('w1', '/wt').denyWrites, []);
 });

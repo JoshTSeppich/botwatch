@@ -61,7 +61,7 @@ const V3_ORCHESTRATOR_TOOLS = tools.TOOLS.filter(([name]) => !['ask_human', 'mer
 );
 export const ORCHESTRATOR_TOOLS = [
   ...V3_ORCHESTRATOR_TOOLS,
-  ['claim_paths', 'Claim the repo paths your workers will change, as globs (src/ui/**). Required before spawn_worker. Waits for the hypervisor if another orchestrator holds an overlapping claim.', { paths: 'array' }],
+  ['claim_paths', 'Claim the repo paths your workers will change, as globs (src/ui/**). Required before spawn_worker. If another orchestrator holds an overlapping claim, this waits until the hypervisor resolves it, then returns your granted claim (which may be narrower).', { paths: 'array' }],
   ['report', 'Your summary for the hypervisor: progress, problems, what is next.', { summary: 'string' }],
   ['ask_up', 'Pass a question up to the hypervisor. Waits for the answer and returns it.', { question: 'string', options: 'array', suggestion: 'string', worker: 'string' }],
   ['request_lease', 'Ask the hypervisor for more tokens, slots or time. Returns at once; the hypervisor decides.', { tokens: 'number', slots: 'number', minutes: 'number', reason: 'string' }],
@@ -420,11 +420,12 @@ export class Fleet extends EventEmitter {
   // enforcement hook, and the hook itself.
   #workerOptions(orchestratorId, workerId, cwd) {
     const o = this.orchestrators.get(orchestratorId);
-    const denyGlobs = [];
-    for (const other of this.orchestrators.values()) {
-      if (other.id === orchestratorId || other.goal.repo !== o.goal.repo || other.claim?.state !== 'granted') continue;
-      denyGlobs.push(...other.claim.globs);
-    }
+    // Only live claims: a released one (its orchestrator queued its work) is
+    // free again. Found in a real run, where it locked a sequenced worker out
+    // of the very paths its own claim had just been granted.
+    const denyGlobs = this.granted(o.goal.repo)
+      .filter((c) => c.owner !== orchestratorId)
+      .flatMap((c) => c.globs);
     return {
       denyWrites: denyGlobs.map((g) => join(cwd, g)),
       enforce: this.enforcePath ? { socket: this.enforcePath, session: `${orchestratorId}/${workerId}` } : null,
@@ -504,6 +505,24 @@ export class Fleet extends EventEmitter {
     this.conflicts.set(conflict, { id: conflict, claimant: id, holders: found.map((f) => f.owner), pairs: found.flatMap((f) => f.pairs.map((p) => ({ with: f.owner, mine: p[0], theirs: p[1] }))) });
     this.emit('change');
     return { waiting: conflict, overlaps: this.conflicts.get(conflict).pairs, note: 'the hypervisor resolves it; spawn_worker is refused until then' };
+  }
+
+  // claim_paths as the orchestrator calls it: a claim that has to wait
+  // waits, and returns once it is granted (as asked, narrowed or given).
+  async claimAndWait(id, paths) {
+    const first = this.claimPaths(id, paths);
+    if (!first.waiting) return first;
+    const o = this.orchestrators.get(id);
+    await new Promise((settle) => {
+      const check = () => {
+        if (o.claim?.state === 'granted' || this.stopped) {
+          this.off('change', check);
+          settle();
+        }
+      };
+      this.on('change', check);
+    });
+    return o.claim?.state === 'granted' ? { granted: o.claim.globs, after: first.waiting } : { error: 'the fleet was stopped' };
   }
 
   // Re-checks every waiting claim: after a release, a narrowing or a give.
@@ -905,7 +924,7 @@ export class Fleet extends EventEmitter {
   async callOrchestrator(id, name, args = {}) {
     const o = this.orchestrators.get(id);
     if (!o) return { error: 'not an orchestrator of this fleet' };
-    if (name === 'claim_paths') return this.claimPaths(id, args.paths);
+    if (name === 'claim_paths') return this.claimAndWait(id, args.paths);
     if (name === 'report') return this.report(id, args.summary);
     if (name === 'ask_up') return this.askUp(id, args);
     if (name === 'request_lease') return this.requestLease(id, args);
