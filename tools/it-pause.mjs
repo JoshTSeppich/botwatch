@@ -7,15 +7,19 @@
 //      nothing moves — no tool calls, no files, no tokens.
 //   2. Resume all: the same sessions carry on and finish, and are snapshotted.
 //   3. A small budget: the run pauses itself when it's spent, Resume is refused
-//      until the budget is raised, then it carries on.
+//      until the budget is raised, then it carries on. Also measures the
+//      overshoot: what was counted, and what the transcripts say was spent,
+//      one count per API message across the orchestrator, the workers and
+//      their subagents.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { serveControl } from '../electron/orchestrator/control.js';
 import { createPilot } from '../electron/orchestrator/pilot.js';
+import { countUsage } from '../electron/tokens.js';
 
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -63,6 +67,29 @@ const files = (repo) =>
   readdirSync(join(repo, '..', '.botwatch-worktrees'), { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .flatMap((d) => readdirSync(join(repo, '..', '.botwatch-worktrees', d.name, 'src')));
+// Every transcript in a project directory, subagents included, one count per
+// API message.
+function spentIn(cwd) {
+  const dir = join(homedir(), '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  if (!existsSync(dir)) return 0;
+  const files = [];
+  for (const name of readdirSync(dir)) {
+    if (name.endsWith('.jsonl')) files.push(join(dir, name));
+    const subs = join(dir, name, 'subagents');
+    if (existsSync(subs)) files.push(...readdirSync(subs).filter((f) => f.endsWith('.jsonl')).map((f) => join(subs, f)));
+  }
+  let total = 0;
+  for (const file of files) {
+    const seen = new Map();
+    for (const line of readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
+      const r = JSON.parse(line);
+      if (r.type === 'assistant' && r.message?.id) seen.set(r.message.id, Math.max(seen.get(r.message.id) ?? 0, countUsage(r.message.usage)));
+    }
+    for (const v of seen.values()) total += v;
+  }
+  return total;
+}
+
 const tools = (run) => run.workers.reduce((n, w) => n + w.log.items.filter((i) => i.kind === 'tool').length, 0);
 const tokens = (run) => run.workers.reduce((n, w) => n + w.tokens, 0);
 
@@ -98,14 +125,26 @@ async function scenarioPauseResume() {
 async function scenarioBudget() {
   console.log('\n3. A small budget pauses the run; Resume waits for a raise');
   const { repo } = scratchRepo();
-  const { pilot, server, run } = await startRun(repo, { budgetTokens: 60_000 });
+  // 20k: in correct units this whole task costs about 45k (measured on
+  // 2.1.282), so a budget has to be well under that to be reached at all.
+  // v3's 60k tripped only because it counted each message two to five times.
+  const BUDGET = 20_000;
+  const { pilot, server, run } = await startRun(repo, { budgetTokens: BUDGET });
   for (let i = 0; i < 240 && !run.budgetExhausted; i += 1) await sleep(500);
   await sleep(2500);
   check('budget reached from counted tokens', run.budgetExhausted, `${run.ledger.spent} / ${run.ledger.limitTokens}`);
+  // Everything spent by the time the run stood still, from the transcripts.
+  const orchestratorDir = join(homedir(), '.claude', 'botwatch', 'runs', String(run.id ?? 'run'));
+  const truth = spentIn(orchestratorDir) + run.workers.reduce((n, w) => n + (w.cwd ? spentIn(w.cwd) : 0), 0);
+  // Not exact after a pause: the interrupted turns never report their final
+  // output, so the count runs a little under (3–5% measured). Finished turns
+  // match the transcripts exactly (it-snapshot.mjs).
+  check('counted within 6% of the transcripts, never over', run.ledger.spent <= truth && (truth - run.ledger.spent) / truth < 0.06, `counted ${run.ledger.spent.toLocaleString()}, transcripts ${truth.toLocaleString()}`);
+  console.log(`  info overshoot past the ${BUDGET.toLocaleString()} budget: ${(truth - BUDGET).toLocaleString()} tokens (${run.workers.length} workers + the orchestrator)`);
   check('the run paused itself', run.paused && run.pauseReason === 'budget');
   check('Resume is refused', /budget is spent/.test(pilot.resumeAll().error ?? ''));
   const raised = pilot.raiseBudget(500_000);
-  check('+500k raises it', raised.limit === 560_000, JSON.stringify(raised));
+  check('+500k raises it', raised.limit === BUDGET + 500_000, JSON.stringify(raised));
   const out = pilot.resumeAll();
   check('then Resume works', !out.error, JSON.stringify(out));
   await sleep(8000);
