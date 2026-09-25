@@ -12,7 +12,8 @@ Run agents in parallel. Review every change. Merge deliberately.
 and is answered from the pill, one leaves a `.env` and build output that Merge refuses until
 each is acknowledged, and the last merge conflicts with one that landed and is aborted with
 nothing changed. Waiting for the workers is sped up 8×; everything else is real time.
-[mp4](docs/demo.mp4)*
+Full quality: [demo.mp4](https://raw.githubusercontent.com/JoshTSeppich/botwatch/main/docs/demo.mp4)
+(1.9MB download; GitHub doesn't play video files from a repo inline).*
 
 This is a small always-on-top pill that docks to the top edge of your terminal and tells you,
 without you asking: how many sessions are live, what each one is doing, which one needs you, and
