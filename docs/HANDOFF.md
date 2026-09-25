@@ -248,6 +248,20 @@ resumed session opened on the worker's conversation. Found on the way:
   the one-second tick and could swallow the 2.6s line. The window now sets
   `backgroundThrottling: false`.
 
+**v3 finished: Pause all / Resume all, and the allowance line.** Pause sends each running
+worker, and the orchestrator, a stream-json `control_request` interrupt: the Agent SDK's own
+mechanism. Measured on 2.1.281: acknowledged at once, the turn ends as
+`error_during_execution` (which `Worker` swallows, so a paused worker is neither errored nor
+snapshotted), the session stays alive, and Resume ("Continue where you left off.") continues it.
+While paused, spawns queue and `message_worker` is refused. `tools/it-pause.mjs` (real CLI,
+all passing): nothing moves for 10s while paused; after Resume the same sessions finish all 24
+files; a 60k budget pauses the run, Resume is refused, +500k then Resume works. **The budget is
+detected, not prevented:** it reached 73,273 against 60,000, because a turn in flight finishes
+before the pause lands. The allowance line comes from a measured `rate_limit_event` week
+(saved in `~/.claude/botwatch/limits.json` from workers' own streams, which cost nothing) and a
+limit set in `PILL_WEEKLY_TOKEN_LIMIT`. Without a limit in tokens it states only the measured
+share of the week used, never a share computed from a guess.
+
 **Review in terminal: done.** Each review card opens `git diff <fork point> <reviewed SHA>` in
 Terminal (`Run.diffCommand`). It works only for this run's branches, and only for a commit on
 that branch. It uses `--no-ext-diff --no-textconv`, and every argument is shell-quoted. Proven

@@ -184,6 +184,11 @@ brief is what makes the failure clear, not npm.
 
 ## Also in scope
 
+- **Token budget.** Counted from the tokens each turn reports and enforced by pausing the run when
+  it's spent: **detected, not prevented.** A turn in flight finishes first. Measured: 73,273
+  tokens against a 60,000 budget. Resuming needs the user to raise the budget from the pill; no
+  tool can.
+
 - **Remote debugging.** BotWatch never enables `--remote-debugging-port` or the Node inspector
   itself (a test checks the source for it). The packaged app's Electron fuses turn off `--inspect`
   and `NODE_OPTIONS`, and leave run-as-node on for the guard hook and MCP relay. Measured on the

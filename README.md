@@ -148,6 +148,15 @@ and Merge refuses until you tick each one by name. What merges is the exact comm
 if a worker ran again since, Merge refuses and asks you to look again. Each branch lands as its own
 `--no-ff` merge naming the worker and the commit. Nothing is ever pushed.
 
+**Pause all** interrupts every worker's turn and keeps its session. Nothing starts and nothing is
+spent while paused, and **Resume all** carries each one on from where it was. If the run's token
+budget runs out, it pauses itself and offers **+500k**. Budgets are counted from the tokens each
+turn reports, so a turn already running when the budget runs out finishes first. A run can end a
+little over its budget (measured: 73k against a 60k budget), and is never stopped early by a
+guess. The setup panel shows what the budget is as a share of your week, but only from a weekly
+limit you set (`PILL_WEEKLY_TOKEN_LIMIT`). With just a measurement from the CLI it says how much
+of the week is used and when that was measured, and with neither it says nothing.
+
 Click a worker to open its log beside the card: every command it ran, the last lines of what came
 back (refusals in red), and what it said. **Take over** hands that worker to you. BotWatch stops
 it, opens the same Claude Code session in Terminal in its worktree, and from then on the
