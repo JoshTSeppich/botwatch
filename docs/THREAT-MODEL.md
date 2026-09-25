@@ -104,6 +104,18 @@ this section is about the files a worker is kept from reading, and the network i
   by content (AWS keys, `sk-…`, GitHub tokens, private-key blocks). A flagged file doesn't merge
   unless you tick it by name.
 
+**The environment.** A worker's environment is built from an **allowlist**, not "everything minus
+a denylist": `PATH`, `HOME`, user, shell and temp, locale (`LANG`, `LC_*`), `TERM`, proxy and CA
+settings, and Claude Code's own `ANTHROPIC_*` / `CLAUDE_CODE_*` / `CLAUDE_CONFIG_DIR`. Nothing else
+the launching shell exported gets through. Claude's credentials, when they come from the
+environment (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`), reach the CLI
+so it can authenticate, and are hidden from its Bash by the sandbox's `credentials.envVars` deny.
+Test runs get the allowlist without any credentials.
+
+Measured: a real worker launched from a shell exporting `BOTWATCH_CANARY_SECRET` ran `env` and saw
+64 variables, none of them the canary, and still authenticated and did its task. The sandbox deny,
+shown with a harmless `ANTHROPIC_PROBE`: the CLI had it, and its Bash printed `probe=[unset]`.
+
 **Measured**
 
 Before the denylist:
@@ -139,8 +151,9 @@ brief is what makes the failure clear, not npm.
   goes to Anthropic's API as part of the conversation.
 - **With installs on, the registries are a way out.** A GET to `registry.npmjs.org/<text>` carries
   `<text>` to a third party. That is the trade the toggle makes, per run.
-- Environment variables are not scrubbed. A token exported in the environment BotWatch starts from
-  reaches the worker. The sandbox's `credentials.envVars` could deny named ones; not built.
+- Claude Code puts some variables into its own Bash that BotWatch doesn't control:
+  `CLAUDE_CODE_MESSAGING_TOKEN` (the CLI's own channel) and `CLOUDSDK_PROXY_PASSWORD` (the
+  sandbox's network proxy). They're the CLI's, not yours.
 
 ## 4. Bad generated code
 
@@ -169,6 +182,14 @@ brief is what makes the failure clear, not npm.
   anything else your tools execute from the repo.
 
 ## Also in scope
+
+- **Remote debugging.** BotWatch never enables `--remote-debugging-port` or the Node inspector
+  itself (a test checks the source for it). The packaged app's Electron fuses turn off `--inspect`
+  and `NODE_OPTIONS`, and leave run-as-node on for the guard hook and MCP relay. Measured on the
+  packaged build: fuses read back as set, the signature is valid, a normal launch opens no TCP
+  listening port, and `--inspect=9229` opens nothing. There is no fuse for
+  `--remote-debugging-port`: whoever launches the app can still pass it (that's how the demo was
+  recorded). Anyone able to launch processes as you already has that access.
 
 - **Forged hook events.** Any process running as you can write to `pilld.sock` and make a session
   look like it needs you. Workers can't (measured: EPERM). The cost of a forgery is a wrong colour.
