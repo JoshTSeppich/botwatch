@@ -26,6 +26,12 @@ export async function call(run, name, args = {}) {
   if (name === 'spawn_worker') return run.spawn(args.task, args.model ?? run.model, args.permissionMode);
   if (name === 'list_workers') return run.list();
   if (name === 'read_worker') return run.find(args.id) ? run.list().find((w) => w.id === args.id) : { error: 'no such worker' };
+  // A taken-over worker is the user's now. The orchestrator is told so, and
+  // told to leave it alone, rather than being allowed to talk over them.
+  const taken = run.find(args.id)?.takenOver;
+  if (taken && ['message_worker', 'stop_worker'].includes(name)) {
+    return { error: `${args.id} was taken over by the user; leave it and carry on with the others` };
+  }
   if (name === 'stop_worker') {
     run.find(args.id)?.stop();
     run.drain();

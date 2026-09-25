@@ -63,6 +63,13 @@ export function createOrchestrate({ dock, host, statusEl }) {
   const questionEl = el('div', 'question');
   questionEl.hidden = true;
   runEl.append(treeEl, questionEl);
+  // The worker log: beside the card, outside the rebuilt tree, polled while open.
+  const logEl = el('div', 'logpanel');
+  logEl.hidden = true;
+  dock.append(logEl);
+  let logFor = null;
+  let logAfter = 0;
+  let logTimer = null;
   let asked = null;
   const panel = el('div', 'panel');
   panel.hidden = true;
@@ -436,6 +443,70 @@ export function createOrchestrate({ dock, host, statusEl }) {
     stop.addEventListener('pointerup', cancel);
     stop.addEventListener('pointerleave', cancel);
     return stop;
+  }
+
+  treeEl.addEventListener('click', (event) => {
+    const row = event.target.closest('.row--worker');
+    if (row?.dataset.worker) openLog(row.dataset.worker);
+  });
+
+  function closeLog() {
+    clearInterval(logTimer);
+    logTimer = null;
+    logFor = null;
+    logEl.hidden = true;
+    logEl.textContent = '';
+  }
+
+  function openLog(id) {
+    if (logFor === id) return closeLog();
+    closeLog();
+    logFor = id;
+    logAfter = 0;
+    const head = el('div', 'logpanel__head');
+    const title = el('div', 'logpanel__title', id);
+    const meta = el('div', 'logpanel__meta', '');
+    const take = el('button', 'btn btn--accent', 'Take over');
+    take.type = 'button';
+    const close = button('\u00d7', 'logpanel__close', closeLog);
+    head.append(title, meta, el('div', 'footer__spacer'), take, close);
+    const body = el('div', 'logpanel__body');
+    const note = el('div', 'panel__error');
+    logEl.append(head, body, note);
+    logEl.hidden = false;
+
+    // Take over is a hand-off: two clicks, the second one says what happens.
+    let armed = false;
+    take.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true;
+        take.textContent = 'Stop it and open in Terminal';
+        return;
+      }
+      take.disabled = true;
+      const outcome = await api.takeOver(id);
+      note.className = outcome?.error ? 'panel__error' : 'panel__ok';
+      note.textContent = outcome?.error ?? 'Opened in Terminal. The orchestrator will leave it alone; its branch is yours to finish and merge.';
+    });
+
+    async function poll() {
+      if (logFor !== id) return;
+      const res = await api.log(id, logAfter);
+      if (logFor !== id || res?.error) return;
+      meta.textContent = `${res.branch} \u00b7 ${res.state}`;
+      take.disabled = res.state === 'taken over' || res.state === 'queued';
+      if (res.state === 'taken over' && !note.textContent) note.textContent = 'Taken over: it runs in your terminal now.';
+      const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+      for (const item of res.items) {
+        const line = el('div', `logline logline--${item.kind}${item.error ? ' is-error' : ''}`, item.text);
+        body.append(line);
+        logAfter = item.seq;
+      }
+      // Follow the tail unless you've scrolled up to read.
+      if (atBottom && res.items.length) body.scrollTop = body.scrollHeight;
+    }
+    void poll();
+    logTimer = setInterval(poll, 1000);
   }
 
   api.onOpen(() => (panelKind ? closePanel() : openSetup()));

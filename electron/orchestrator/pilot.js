@@ -6,6 +6,8 @@
 // the same one.
 
 import { execFile as execFileCb } from 'node:child_process';
+import { logSince } from './log.js';
+import { trustFolder } from './trust.js';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -148,6 +150,25 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     }
   }
 
+  // The worker's log after entry `after`, for the panel's live tail.
+  function log(id, after = 0) {
+    const worker = live?.run.find(id);
+    if (!worker) return { error: 'no such worker' };
+    return { id, state: worker.takenOver ? 'taken over' : worker.state, branch: worker.branch, items: logSince(worker.log, after) };
+  }
+
+  // Take over: the worker stops being BotWatch's and becomes yours. The
+  // headless process is stopped first and waited for, so two processes never
+  // write one session; then the same session is resumed in a terminal, in its
+  // worktree. From then on the orchestrator may not message it, and the pill
+  // will not merge it: the branch is yours to finish and merge.
+  async function takeOver(id, options) {
+    if (!live) return { error: 'no run' };
+    const outcome = await takeOverWorker(live.run, id, options);
+    onChange();
+    return outcome;
+  }
+
   function answer(text) {
     if (!live) return { error: 'no run' };
     return live.run.answer(text);
@@ -183,10 +204,45 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     return live ? runView(live, now) : null;
   }
 
-  return { start, current, review, merge, answer, stop, close, view };
+  return { start, current, review, merge, answer, log, takeOver, stop, close, view };
 }
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
+
+export async function takeOverWorker(run, id, { open = openInTerminal, waitMs = 5000, trust = trustFolder } = {}) {
+  const worker = run.find(id);
+  if (!worker) return { error: 'no such worker' };
+  if (worker.takenOver) return { error: `${id} is already taken over` };
+  if (!worker.sessionId) return { error: `${id} has no session yet; wait for it to start` };
+  worker.takenOver = true;
+  const exited =
+    worker.child && worker.child.exitCode === null
+      ? new Promise((resolve) => worker.child.once('exit', resolve))
+      : Promise.resolve();
+  worker.stop();
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, waitMs))]);
+  run.drain();
+  // The click is the consent; without this the session stops at the trust
+  // prompt for a folder nobody has opened interactively before.
+  const trusted = trust(worker.cwd);
+  const command = `cd ${shellQuote(worker.cwd)} && claude --resume ${shellQuote(worker.sessionId)}`;
+  await open(command);
+  return { ok: true, command, trusted };
+}
+
+export function shellQuote(text) {
+  return `'${String(text).replace(/'/g, `'\\''`)}'`;
+}
+
+// Terminal.app, because it is on every Mac and scriptable. The session opens
+// in a new window, in front.
+export async function openInTerminal(command) {
+  const script = `tell application "Terminal"
+  do script ${JSON.stringify(command)}
+  activate
+end tell`;
+  await execFile('osascript', ['-e', script]);
+}
 
 // Measured: instead of calling ask_human, an orchestrator ended its own turn
 // with 'QUESTION: …', the workers' convention. That is a question passed up
@@ -224,7 +280,7 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
   const workers = run.workers.map((w) => ({
     id: w.id,
     task: w.task,
-    state: w.state === 'running' ? 'running' : w.state,
+    state: w.takenOver ? 'takenover' : w.state === 'running' ? 'running' : w.state,
     summary: w.summary ?? w.task,
     branch: w.branch,
     model: w.model,

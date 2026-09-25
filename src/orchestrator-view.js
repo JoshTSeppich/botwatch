@@ -37,6 +37,8 @@ export function badgeTone(state) {
     waiting: ['?', 'is-waiting'],
     errored: ['!', 'is-errored'],
     done: ['\u2713', 'is-turn'],
+    // Handed to the user in a terminal: out of BotWatch's hands, not failed.
+    takenover: ['\u2197', 'is-idle'],
   };
   const [glyph, tone] = glyphs[state] ?? ['?', 'is-waiting'];
   return { kind: 'badge', glyph, tone };
@@ -92,6 +94,8 @@ export function collapsedLine(run) {
 
 function workerRow(worker) {
   const row = el('div', `row row--worker${worker.state === 'queued' ? ' row--queued' : ''}`);
+  // Clicking a worker opens its log.
+  row.dataset.worker = worker.id;
   row.append(badge(worker.state));
   row.append(el('div', 'row__idx', worker.id));
 
@@ -115,7 +119,8 @@ export function tree(run) {
 
   const orchestrator = el('div', 'row row--orchestrator');
   orchestrator.append(badge(run.orchestrator.state));
-  orchestrator.append(el('div', 'row__idx', 'O'));
+  // The spec's `O`, in the sans font: in the mono font it reads as a zero.
+  orchestrator.append(el('div', 'row__idx row__idx--o', 'O'));
   const body = el('div', 'row__body');
   body.append(el('div', 'row__prose', run.orchestrator.summary));
   body.append(el('div', 'row__meta', `${run.repo} · ${run.model}`));

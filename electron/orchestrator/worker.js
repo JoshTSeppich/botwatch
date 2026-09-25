@@ -6,6 +6,7 @@
 
 import { spawn } from 'node:child_process';
 
+import { appendLog, logEntries } from './log.js';
 import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
@@ -133,6 +134,8 @@ export class Worker extends EventEmitter {
     Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs, allowInstalls });
     this.state = 'queued';
     this.tokens = 0;
+    // What the log panel shows; see log.js.
+    this.log = { seq: 0, items: [] };
     this.sessionId = null;
     this.child = null;
   }
@@ -173,6 +176,11 @@ export class Worker extends EventEmitter {
       record = JSON.parse(line);
     } catch {
       return;
+    }
+    const entries = logEntries(record);
+    if (entries.length) {
+      appendLog(this.log, entries);
+      this.emit('log', this);
     }
     const event = readEvent(record);
     if (!event) return;

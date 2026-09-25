@@ -335,6 +335,7 @@ export class Run extends EventEmitter {
       tokens: w.tokens,
       summary: w.summary ?? null,
       question: w.question ?? null,
+      takenOver: Boolean(w.takenOver),
       sessionId: w.sessionId,
     }));
   }

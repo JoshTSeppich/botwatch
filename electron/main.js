@@ -21,7 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 // Tall enough for the setup and review panels, which hang below the pill. The
 // window is transparent and click-through, so its size costs nothing visible.
-const WINDOW = { width: 820, height: 720 };
+const WINDOW = { width: 1000, height: 720 };
 const DOCK_Y = -8;
 const SNAP_PX = 24;
 const POLL_MS = 1000;
@@ -187,6 +187,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('orch:review', () => pilot.review());
   ipcMain.handle('orch:merge', (_event, selection) => pilot.merge(selection));
   ipcMain.handle('orch:answer', (_event, text) => pilot.answer(text));
+  ipcMain.handle('orch:log', (_event, id, after) => pilot.log(id, after));
+  ipcMain.handle('orch:takeOver', (_event, id) => pilot.takeOver(id));
   ipcMain.handle('orch:stop', () => pilot.stop());
   ipcMain.handle('orch:close', () => pilot.close());
 

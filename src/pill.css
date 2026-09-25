@@ -1291,3 +1291,115 @@
   flex: none;
   white-space: nowrap;
 }
+
+/* The spec's orchestrator `O`: sans, so it doesn't read as a zero. */
+.row__idx--o {
+  font-family: var(--sans);
+  font-weight: 600;
+}
+
+.row--worker {
+  cursor: pointer;
+}
+
+/* Worker log: 300px, beside the card, below the usage pill. */
+.logpanel {
+  position: absolute;
+  top: 44px;
+  left: 552px;
+  width: 300px;
+  max-height: 460px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--pill-border);
+  background: var(--pill-bg-open);
+  box-shadow: var(--shadow-open);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.logpanel[hidden] {
+  display: none;
+}
+
+.logpanel__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.logpanel__title {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.logpanel__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  color: var(--ink-sub);
+}
+
+.logpanel__close {
+  width: 24px;
+  padding: 0;
+}
+
+.logpanel__body {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.logpanel .panel__error,
+.logpanel .panel__ok {
+  padding: 0 10px 8px;
+}
+
+.logline {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-bottom: 4px;
+}
+
+.logline--tool {
+  color: var(--accent-ink);
+}
+
+.logline--result {
+  color: var(--ink-sub);
+  padding-left: 10px;
+  border-left: 2px solid var(--rule);
+}
+
+.logline--result.is-error,
+.logline--system.is-error {
+  color: var(--errored);
+}
+
+.logline--text {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-row);
+}
+
+.logline--system {
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+.logpanel__head .btn {
+  flex: none;
+  white-space: nowrap;
+}
