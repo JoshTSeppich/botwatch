@@ -171,6 +171,11 @@ export class Worker extends EventEmitter {
     return this;
   }
 
+  // For tests: feed one stream record as if the CLI had written it.
+  _feed(record) {
+    this.#absorb(JSON.stringify(record));
+  }
+
   #absorb(line) {
     if (!line.trim()) return;
     let record;
@@ -197,6 +202,14 @@ export class Worker extends EventEmitter {
     if (event.kind === 'limits') {
       this.limits = { fiveHour: event.fiveHour, sevenDay: event.sevenDay };
       this.emit('limits', this, this.limits);
+    }
+    if (event.kind === 'finished' && this.pausing) {
+      // The turn our interrupt ended. It reports as an error, but nothing
+      // went wrong: the worker is paused, not errored, and its work is not
+      // finished, so nothing is snapshotted.
+      this.pausing = false;
+      this.emit('change', this);
+      return;
     }
     if (event.kind === 'finished') {
       // A turn that ends on a question is not finished work: nothing is
@@ -228,6 +241,28 @@ export class Worker extends EventEmitter {
       message: { role: 'user', content: [{ type: 'text', text }] },
     });
     return this.child.stdin.write(`${line}\n`);
+  }
+
+  // Pause: interrupt the turn in flight, the way the Agent SDK does, over the
+  // same stream-json stdin. Measured on 2.1.281: acknowledged at once, the turn
+  // ends, the session stays alive, and a later message continues it.
+  pause() {
+    if (this.state !== 'running' || !this.child?.stdin.writable) return false;
+    this.pausing = true;
+    this.child.stdin.write(
+      `${JSON.stringify({ type: 'control_request', request_id: `pause-${Date.now()}`, request: { subtype: 'interrupt' } })}\n`,
+    );
+    this.state = 'paused';
+    this.emit('change', this);
+    return true;
+  }
+
+  resume() {
+    if (this.state !== 'paused') return false;
+    this.state = 'running';
+    const sent = this.message('Continue where you left off.');
+    this.emit('change', this);
+    return Boolean(sent);
   }
 
   // Ends the session politely: closing stdin lets the CLI exit on its own.

@@ -14,6 +14,7 @@ import { probe as probePermissions, request as requestPermissions } from './perm
 import { trackTerminal } from './tracker.js';
 import { serveControl } from './orchestrator/control.js';
 import { createPilot } from './orchestrator/pilot.js';
+import { readLimits } from './orchestrator/limits.js';
 import { recover } from './orchestrator/recovery.js';
 import { setupInfo } from './orchestrator/setup.js';
 
@@ -182,10 +183,24 @@ app.whenReady().then(async () => {
 
   // v3. The renderer opens the setup panel; everything that touches a repo
   // happens here, in pilld.
-  ipcMain.handle('orch:setup', async (_event, repo) => ({
-    ...(await setupInfo(repo, (await readSessions()).sessions ?? [])),
-    recovered,
-  }));
+  ipcMain.handle('orch:setup', async (_event, repo) => {
+    const snapshot = await readSessions();
+    const entered = Number(process.env.PILL_WEEKLY_TOKEN_LIMIT);
+    return {
+      ...(await setupInfo(repo, snapshot.sessions ?? [])),
+      recovered,
+      // For the allowance line: a measured week, a limit you set, and this
+      // week's counted spend. Never the usage pill's 40M guess.
+      allowance: {
+        cached: await readLimits(),
+        enteredLimit: Number.isFinite(entered) && entered > 0 ? entered : null,
+        spent: snapshot.usage?.weeklyUsed ?? 0,
+      },
+    };
+  });
+  ipcMain.handle('orch:pause', () => pilot.pauseAll());
+  ipcMain.handle('orch:resume', () => pilot.resumeAll());
+  ipcMain.handle('orch:raiseBudget', (_event, tokens) => pilot.raiseBudget(tokens));
   ipcMain.handle('orch:start', (_event, config) => pilot.start(config));
   // The native folder picker. The overlay can't take focus on its own, so it
   // is lent focus for as long as the dialog is up.

@@ -5,6 +5,7 @@
 // reports and send back what the user chose; pilld checks it all again.
 
 import { abbrevTokens, formatElapsed, truncate } from './format.js';
+import { allowanceLabel, measuredWeekLabel, weeklyAllowance } from '../electron/orchestrator/allowance.js';
 import { plain } from '../electron/orchestrator/phrase.js';
 import { createRoller, escalationStage } from './motion.js';
 import { orchestratorPill } from './orchestrator-view.js';
@@ -27,7 +28,7 @@ function button(label, className, onClick) {
 }
 
 // A row of mutually exclusive chips. Returns the element and a getter.
-function chips(name, options, initial, format = String) {
+function chips(name, options, initial, format = String, onChange = () => {}) {
   const row = el('div', 'chips');
   row.dataset.field = name;
   let value = initial;
@@ -35,6 +36,7 @@ function chips(name, options, initial, format = String) {
     const chip = button(format(option), 'chip-btn', () => {
       value = option;
       for (const c of row.children) c.classList.toggle('is-on', c === chip);
+      onChange(option);
     });
     chip.dataset.value = String(option);
     if (option === initial) chip.classList.add('is-on');
@@ -178,8 +180,21 @@ export function createOrchestrate({ dock, host, statusEl }) {
     form.append(field('Model', model.el));
     const workers = chips('workers', WORKER_CHOICES, 2);
     form.append(field('Workers at once', workers.el));
-    const budget = chips('budget', BUDGET_CHOICES, 1_000_000, abbrevTokens);
-    form.append(field('Token budget', budget.el));
+    // The share of this week the budget is: from the limit you set, or only
+    // what was measured; never a guessed weekly limit. Nothing if neither.
+    const allowanceNote = el('div', 'field__note');
+    const describeAllowance = (tokens) => {
+      const a = info.allowance ?? {};
+      const measured = weeklyAllowance({ cached: a.cached, enteredLimit: a.enteredLimit, spent: a.spent });
+      const text = allowanceLabel(tokens, measured, a.enteredLimit) ?? measuredWeekLabel(measured) ?? '';
+      allowanceNote.textContent = text;
+      allowanceNote.hidden = !text;
+    };
+    const budget = chips('budget', BUDGET_CHOICES, 1_000_000, abbrevTokens, describeAllowance);
+    describeAllowance(1_000_000);
+    const budgetWrap = el('div');
+    budgetWrap.append(budget.el, allowanceNote);
+    form.append(field('Token budget', budgetWrap));
 
     // Never wider than the user's own, and starting on acceptEdits: pilld
     // decides both (setup.js permissionChoices).
@@ -385,7 +400,13 @@ export function createOrchestrate({ dock, host, statusEl }) {
       aggregate,
       activeWorkers: run.activeWorkers,
       repo: run.repo,
-      sentence: flashing ? flash.text : run.sentence,
+      sentence: flashing
+        ? flash.text
+        : run.budgetHit && run.paused
+          ? 'Budget hit, workers paused'
+          : run.paused
+            ? 'Paused'
+            : run.sentence,
       tasks: run.workers,
       model: run.model,
       time: formatElapsed(run.elapsedMs / 1000),
@@ -420,7 +441,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
     const model = pillModel(run);
     // The clock ticks every second and is patched in place; only a change in
     // what the tree says is a reason to rebuild it.
-    const signature = JSON.stringify([{ ...model, time: null }, run.ready, run.stopped, run.merges.length]);
+    const signature = JSON.stringify([{ ...model, time: null }, run.ready, run.stopped, run.merges.length, run.paused, run.budgetHit]);
     if (signature === drawn || pressed) {
       const clock = treeEl.querySelector('.hdr .eta');
       if (clock && clock.textContent !== model.time) clock.textContent = model.time;
@@ -451,7 +472,14 @@ export function createOrchestrate({ dock, host, statusEl }) {
     const footer = pill.querySelector('.footer');
     footer.textContent = '';
     if (run.stopped || run.merges.length) footer.append(button('Close run', '', () => api.close()));
-    else footer.append(holdToStop());
+    else {
+      footer.append(holdToStop());
+      // Pause interrupts each turn and keeps every session; Resume continues.
+      if (run.paused) {
+        if (run.budgetHit) footer.append(button('+500k', 'btn--accent', () => api.raiseBudget(500_000)));
+        footer.append(button('Resume all', '', () => api.resume()));
+      } else footer.append(button('Pause all', '', () => api.pause()));
+    }
     footer.append(el('div', 'footer__spacer'));
     const review = button(run.ready ? 'Review and merge' : 'Review', 'btn--accent', openReview);
     review.disabled = !run.reviewable;

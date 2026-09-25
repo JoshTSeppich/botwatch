@@ -298,6 +298,7 @@ export class Run extends EventEmitter {
     return {
       stopped: this.stopped,
       budgetExhausted: this.budgetExhausted,
+      paused: Boolean(this.paused),
       userApprovedMerge: this.userApprovedMerge,
       workers: this.workers,
     };
@@ -326,6 +327,7 @@ export class Run extends EventEmitter {
       allowInstalls: this.allowInstalls,
     });
 
+    worker.on('limits', (_w, limits) => this.emit('limits', limits));
     worker.on('tokens', (_w, tokens) => {
       budget.record(this.ledger, id, tokens);
       if (this.budgetExhausted) this.pauseAll('budget');
@@ -406,10 +408,33 @@ export class Run extends EventEmitter {
     return released;
   }
 
+  // Pause interrupts every running worker's turn and keeps the session;
+  // Resume continues each one. While paused nothing new starts: spawns queue.
   pauseAll(reason = 'user') {
+    this.paused = true;
     this.pauseReason = reason;
-    for (const w of this.workers) if (w.state === 'running') w.stop();
+    for (const w of this.workers) if (w.state === 'running') w.pause();
     this.emit('change', this);
+  }
+
+  resumeAll() {
+    if (this.stopped) return { error: 'the run was stopped' };
+    if (this.budgetExhausted) return { error: 'the token budget is spent: raise it to resume' };
+    this.paused = false;
+    this.pauseReason = null;
+    let resumed = 0;
+    for (const w of this.workers) if (w.state === 'paused' && w.resume()) resumed += 1;
+    this.drain();
+    this.emit('change', this);
+    return { resumed };
+  }
+
+  // Only the user raises the budget (the pill's +500k); no tool reaches this.
+  raiseBudget(tokens) {
+    if (!(tokens > 0)) return { error: 'not a raise' };
+    this.ledger.limitTokens += tokens;
+    this.emit('change', this);
+    return { limit: this.ledger.limitTokens };
   }
 
   stop() {
@@ -419,7 +444,10 @@ export class Run extends EventEmitter {
       this.pendingQuestion = null;
     }
     this.stopped = true;
-    this.pauseAll('stopped');
+    this.paused = false;
+    // Stop is not a pause: every worker's process is ended.
+    for (const w of this.workers) if (w.state === 'running' || w.state === 'paused') w.stop();
+    this.emit('change', this);
   }
 
   // Starts whatever the concurrency limit now has room for.

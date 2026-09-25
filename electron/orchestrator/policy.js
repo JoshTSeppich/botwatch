@@ -63,6 +63,8 @@ export function isRepoWrite(command) {
 export function canSpawn(state, limits) {
   if (state.stopped) return { ok: false, reason: 'orchestrator stopped' };
   if (state.budgetExhausted) return { ok: false, reason: 'token budget reached' };
+  // Paused: a new worker waits in the queue for Resume, it doesn't start.
+  if (state.paused) return { ok: false, reason: 'paused by the user', queue: true };
   const running = state.workers.filter((w) => w.state === 'running').length;
   if (running >= limits.maxWorkers) {
     return { ok: false, reason: `worker limit reached (${limits.maxWorkers})`, queue: true };

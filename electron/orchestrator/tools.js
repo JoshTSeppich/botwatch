@@ -32,6 +32,9 @@ export async function call(run, name, args = {}) {
   if (taken && ['message_worker', 'stop_worker'].includes(name)) {
     return { error: `${args.id} was taken over by the user; leave it and carry on with the others` };
   }
+  if (name === 'message_worker' && run.find(args.id)?.state === 'paused') {
+    return { error: `${args.id} is paused by the user; it continues when they resume` };
+  }
   if (name === 'stop_worker') {
     run.find(args.id)?.stop();
     run.drain();

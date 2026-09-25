@@ -6,6 +6,7 @@
 // the same one.
 
 import { execFile as execFileCb } from 'node:child_process';
+import { saveLimits } from './limits.js';
 import { logSince } from './log.js';
 import { trustFolder } from './trust.js';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
@@ -103,7 +104,10 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     });
     orchestrator.on('tokens', (_w, tokens) => {
       budget.record(run.ledger, 'O', tokens);
-      if (run.budgetExhausted) run.pauseAll('budget');
+      if (run.budgetExhausted) {
+        run.pauseAll('budget');
+        orchestrator.pause();
+      }
       onChange();
     });
     // The record a later launch recovers from if this process dies mid-run.
@@ -120,6 +124,10 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       record();
       onChange();
     });
+    // Keep the newest measured week for the setup panel's allowance line.
+    const keepLimits = (limits) => void saveLimits(limits).catch(() => {});
+    run.on('limits', keepLimits);
+    orchestrator.on('limits', (_w, limits) => keepLimits(limits));
 
     live = { run, token, orchestrator, startedAt: Date.now(), closed: false, dir: spec.cwd, recorder };
     orchestrator.start();
@@ -183,6 +191,29 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     return live.run.answer(text);
   }
 
+  function pauseAll() {
+    if (!live || live.closed) return { error: 'no run' };
+    live.run.pauseAll('user');
+    live.orchestrator.pause();
+    onChange();
+    return { paused: true };
+  }
+
+  function resumeAll() {
+    if (!live || live.closed) return { error: 'no run' };
+    const out = live.run.resumeAll();
+    if (!out.error) live.orchestrator.resume();
+    onChange();
+    return out;
+  }
+
+  function raiseBudget(tokens) {
+    if (!live || live.closed) return { error: 'no run' };
+    const out = live.run.raiseBudget(tokens);
+    onChange();
+    return out;
+  }
+
   function stop() {
     if (!live) return;
     live.run.stop();
@@ -213,7 +244,7 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
     return live ? runView(live, now) : null;
   }
 
-  return { start, current, review, merge, reviewInTerminal, answer, log, takeOver, stop, close, view };
+  return { start, current, review, merge, reviewInTerminal, answer, log, takeOver, pauseAll, resumeAll, raiseBudget, stop, close, view };
 }
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
@@ -318,6 +349,9 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     testCommand: run.testCommand,
     allowInstalls: run.allowInstalls,
     stopped: run.stopped,
+    paused: Boolean(run.paused),
+    pauseReason: run.pauseReason ?? null,
+    budgetHit: run.budgetExhausted,
     orchestrator: {
       state: q ? 'waiting' : orchestrator.state === 'running' ? 'working' : orchestrator.state,
       summary: q ? `Needs your answer: ${q.worker ?? 'a worker'} asks` : orchestrator.summary ?? 'planning the work',

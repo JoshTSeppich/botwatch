@@ -68,3 +68,13 @@ export function modelChip(modelId) {
   const version = parts.filter((p) => /^\d{1,2}$/.test(p)).join('.');
   return version ? `${family} ${version}` : family || null;
 }
+
+// With a measurement but no limit in tokens, the budget can't be turned into a
+// share of the week without inventing a denominator. So this says only what
+// was measured, and how long ago.
+export function measuredWeekLabel(allowance) {
+  if (!allowance || allowance.source !== 'measured') return null;
+  const used = Math.round((1 - allowance.remainingFraction) * 100);
+  const age = describeAge(allowance.ageMs);
+  return allowance.stale ? `Week ${used}% used · measured ${age}, may be out of date` : `Week ${used}% used · measured ${age}`;
+}

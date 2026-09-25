@@ -39,6 +39,7 @@ export function badgeTone(state) {
     done: ['\u2713', 'is-turn'],
     // Handed to the user in a terminal: out of BotWatch's hands, not failed.
     takenover: ['\u2197', 'is-idle'],
+    paused: ['\u2016', 'is-idle'],
   };
   const [glyph, tone] = glyphs[state] ?? ['?', 'is-waiting'];
   return { kind: 'badge', glyph, tone };
