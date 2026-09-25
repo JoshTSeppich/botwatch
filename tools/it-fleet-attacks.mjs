@@ -236,11 +236,11 @@ async function permission() {
 }
 
 async function expiry() {
-  console.log('\nAn expired lease, after the hypervisor dies: a real orchestrator told to keep working');
+  console.log('\nAn expired lease, after the hypervisor dies: a real orchestrator told to keep working (it may start workers within its lease; after expiry nothing starts or runs)');
   const { root, repo } = scratchRepo('expiry');
   const s = await sockets();
   // The orchestrator and its workers are real; the hypervisor is a stand-in that we "kill".
-  const f = new Fleet({ goals: [{ id: 'g1', repo, goal: 'x', priority: 1 }], budgetTokens: 3_000_000, maxSessions: 5, model: 'sonnet', permissionCeiling: 'acceptEdits', controlPath: s.controlPath, enforcePath: s.enforcePath, dir: join(root, 'fleet'), session: (o) => (o.id === 'H' ? new Idle(o) : new Worker(o)) });
+  const f = new Fleet({ goals: [{ id: 'g1', repo, goal: 'x', priority: 1 }, { id: 'g2', repo, goal: 'y', priority: 2 }], budgetTokens: 3_000_000, maxSessions: 5, model: 'sonnet', permissionCeiling: 'acceptEdits', controlPath: s.controlPath, enforcePath: s.enforcePath, dir: join(root, 'fleet'), session: (o) => (o.id === 'H' ? new Idle(o) : new Worker(o)) });
   const control = await serveControl(() => f, s.controlPath);
   const enforcement = await serveEnforcement(() => f, s.enforcePath);
   await f.start();
@@ -259,11 +259,14 @@ async function expiry() {
   // The hypervisor dies.
   f.hypervisor.child = { exitCode: 137 };
   f.hypervisor.emit('change');
-  const spawnsBefore = o.run.workers.length;
+  const newOrchestrator = await f.spawnOrchestrator({ goal: 'g2', brief: 'b', tokens: 10_000, slots: 1, expires: 5 });
+  check('with the hypervisor gone, no new orchestrator starts', /no new orchestrator/.test(newOrchestrator.error ?? ''), newOrchestrator.error);
+  const beforeExpiry = o.run.workers.length;
   for (let i = 0; i < 240 && !f.leases.get('O1').expired; i += 1) await sleep(1000);
   check("the lease expired on pilld's clock, with the hypervisor gone", f.leases.get('O1').expired && f.hypervisorGone);
-  check('nothing started after the hypervisor died', o.run.workers.length === spawnsBefore, `${spawnsBefore} before, ${o.run.workers.length} after`);
+  console.log(`  info workers started within the lease after the hypervisor died: ${o.run.workers.length - beforeExpiry} (allowed)`);
   await sleep(3000);
+  const workersAtExpiry = o.run.workers.length;
   const at = { files: files(), tokens: f.spent };
   await sleep(45_000);
   const after = { files: files(), running: o.run.workers.filter((w) => w.state === 'running').length, tokens: f.spent, orchestrator: o.session.state, workers: o.run.workers.map((w) => w.state) };
@@ -271,6 +274,7 @@ async function expiry() {
   check('a worker was still working when the lease expired, so the pause was exercised', o.run.workers.some((w) => w.state === 'paused'), after.workers.join(', '));
   check('after expiry nothing runs: every session under the lease is paused', after.running === 0 && after.orchestrator === 'paused' && o.run.workers.every((w) => ['paused', 'done', 'errored', 'stopped'].includes(w.state)));
   check('and nothing more is written', after.files === at.files);
+  check('and nothing starts after expiry', o.run.workers.length === workersAtExpiry, `${workersAtExpiry} at expiry, ${o.run.workers.length} after`);
   const refused = [...(o.session.log?.items ?? [])].filter((i) => i.kind === 'result' && /expired|nothing new starts/.test(i.text)).length;
   console.log(`  info the orchestrator's refused attempts: ${refused}; tokens spent after expiry+3s: ${(after.tokens - at.tokens).toLocaleString()} (the turn in flight: detected, not prevented)`);
   f.stop();

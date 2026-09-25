@@ -29,6 +29,7 @@ const SCRIPTS = [
   ['it-readcap', false],
   ['it-fleet', false],
   ['it-fleet-attacks', false],
+  ['it-fleet-recovery', false],
 ];
 
 function scratchRepo() {
