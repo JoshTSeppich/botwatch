@@ -190,3 +190,14 @@ test('the record written for a run carries each pid\'s start time', async () => 
   assert.equal(written.ownerStart, await processStart(process.pid));
   assert.equal(written.workers[0].start, await processStart(process.pid));
 });
+
+test('a run closed while a record write is scheduled stays closed', async () => {
+  const { createRecorder } = await import('../electron/orchestrator/recovery.js');
+  const writes = [];
+  const recorder = createRecorder('/dir', () => ({ closed: false }), { delayMs: 30, write: async (_d, r) => writes.push(r) });
+  recorder.schedule();
+  await recorder.close({ closed: true });
+  recorder.schedule();
+  await new Promise((r) => setTimeout(r, 80));
+  assert.deepEqual(writes, [{ closed: true }], 'the scheduled write was cancelled, and nothing followed the close');
+});

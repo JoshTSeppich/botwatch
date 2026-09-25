@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 import * as budget from './budget.js';
 import { CONTROL_PATH, newToken } from './control.js';
 import { clampPermission } from './policy.js';
-import { runRecord, writeRecord } from './recovery.js';
+import { createRecorder, runRecord } from './recovery.js';
 import { Run } from './run.js';
 import { scriptCommand } from './runtime.js';
 import { Worker } from './worker.js';
@@ -105,15 +105,9 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       onChange();
     });
     // The record a later launch recovers from if this process dies mid-run.
-    // Written on every change, at most twice a second.
-    let pending = null;
-    const record = () => {
-      if (pending) return;
-      pending = setTimeout(() => {
-        pending = null;
-        void writeRecord(spec.cwd, runRecord(run, { orchestrator })).catch(() => {});
-      }, 500);
-    };
+    // Written on every change, at most twice a second, and closed last.
+    const recorder = createRecorder(spec.cwd, () => runRecord(run, { orchestrator }));
+    const record = () => recorder.schedule();
     orchestrator.on('change', () => {
       relayQuestion(run, orchestrator);
       nudge(run, orchestrator);
@@ -125,9 +119,9 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       onChange();
     });
 
-    live = { run, token, orchestrator, startedAt: Date.now(), closed: false, dir: spec.cwd };
+    live = { run, token, orchestrator, startedAt: Date.now(), closed: false, dir: spec.cwd, recorder };
     orchestrator.start();
-    await writeRecord(spec.cwd, runRecord(run, { orchestrator }));
+    await recorder.now();
     onChange();
     return { ok: true, id: run.id };
   }
@@ -181,7 +175,7 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       live.orchestrator.stop();
     } else live.orchestrator.release();
     await live.run.close();
-    await writeRecord(live.dir, runRecord(live.run, { closed: true, orchestrator: live.orchestrator })).catch(() => {});
+    await live.recorder.close(runRecord(live.run, { closed: true, orchestrator: live.orchestrator })).catch(() => {});
     onChange();
   }
 

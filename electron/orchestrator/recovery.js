@@ -67,6 +67,32 @@ export async function writeRecord(dir, record, { lookup = startOf } = {}) {
   await writeFile(join(dir, 'run.json'), JSON.stringify(withStarts, null, 2), { mode: 0o600 });
 }
 
+// Writes a run's record as it changes, at most once per `delayMs`, and marks
+// it closed last. A write still scheduled when the run closed used to land
+// after the closed one, and a cleanly closed run came back as "interrupted".
+export function createRecorder(dir, snapshot, { delayMs = 500, write = writeRecord } = {}) {
+  let timer = null;
+  let closed = false;
+  return {
+    schedule() {
+      if (closed || timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        if (!closed) void write(dir, snapshot()).catch(() => {});
+      }, delayMs);
+    },
+    async now() {
+      if (!closed) await write(dir, snapshot());
+    },
+    async close(final) {
+      closed = true;
+      clearTimeout(timer);
+      timer = null;
+      await write(dir, final);
+    },
+  };
+}
+
 function alive(pid) {
   if (!pid) return false;
   try {
