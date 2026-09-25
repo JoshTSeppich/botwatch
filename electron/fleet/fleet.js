@@ -343,6 +343,41 @@ export class Fleet extends EventEmitter {
     return { id, lease: this.leaseView(id) };
   }
 
+  // A v3 orchestrator the user started before the fleet, brought under it.
+  // It keeps its own tools (its relay's token is the v3 one), and from now on
+  // its starts go through the fleet's gate: a lease made from its budget, the
+  // global cap, and a claim of its whole repo, since it can't state a
+  // narrower one. Its questions climb the chain like ask_up.
+  adopt({ run, session, token, goal = run.goal, expires = 120 }) {
+    if (this.hypervisorGone || this.stopped) return { error: 'nothing new starts now' };
+    const id = `O${this.nextO}`;
+    const lease = { tokens: Math.max(run.ledger.limitTokens, run.ledger.spent + 1), slots: run.limits.maxWorkers, expiresAt: this.now() + minutes(expires) };
+    const ok = grantable(this, id, lease, this.now());
+    if (!ok.ok) return { error: `can't adopt: ${ok.reason}` };
+    this.nextO += 1;
+    this.leases.set(id, { ...lease, spent: run.ledger.spent, revoked: false, expired: false });
+    const entry = { id, goal: { id: `v3-${run.id ?? id}`, goal, repo: run.repo, priority: null }, brief: '', run, token, session, claim: null, summary: null, reports: [], finished: false, violations: [], adopted: true };
+    this.orchestrators.set(id, entry);
+    run.gate = () => this.gate(id);
+    run.workerOptions = (workerId, cwd) => this.#workerOptions(id, workerId, cwd);
+    run.on('tokens', (n) => this.#charge(id, n));
+    run.on('toolResult', (worker) => void this.#checkClaim(id, worker));
+    session?.on('tokens', (_s, n) => this.#charge(id, n));
+    this.tokens.set(token, { role: 'V3', id });
+    const claim = this.claimPaths(id, ['**']);
+    this.decisions.record({ by: 'pilld', level: 'pilld', chain: chain('H', id), kind: 'spawn', text: `adopted a v3 orchestrator as ${id}, lease ${lease.tokens.toLocaleString('en-US')} tokens, ${lease.slots} slots; claim ${claim.granted ? 'granted' : 'waiting'}` });
+    this.emit('change');
+    return { id, lease: this.leaseView(id), claim };
+  }
+
+  async callAdopted(id, name, args = {}) {
+    const o = this.orchestrators.get(id);
+    const live = leaseLive(this.leases.get(id), this.now());
+    if (['spawn_worker', 'message_worker', 'stop_worker'].includes(name) && !live.ok) return { error: live.reason };
+    if (name === 'ask_human') return this.askUp(id, { question: args.question, options: args.options, suggestion: args.suggestion, worker: args.worker });
+    return tools.call(o.run, name, args);
+  }
+
   // What a worker is started with: the other orchestrators' claims denied in
   // its settings (prevented, tools and Bash), its identity for the
   // enforcement hook, and the hook itself.
@@ -801,6 +836,7 @@ export class Fleet extends EventEmitter {
     const role = this.tokens.get(token);
     if (!role) return null;
     if (role.role === 'H') return { tools: HYPERVISOR_TOOLS, call: (name, args) => this.callHypervisor(name, args) };
+    if (role.role === 'V3') return { tools: tools.TOOLS, call: (name, args) => this.callAdopted(role.id, name, args) };
     return { tools: ORCHESTRATOR_TOOLS, call: (name, args) => this.callOrchestrator(role.id, name, args) };
   }
 

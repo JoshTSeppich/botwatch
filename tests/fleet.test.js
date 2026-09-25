@@ -455,3 +455,34 @@ test('waiting on list_orchestrators ignores token counts and wakes on what matte
   await waiting;
   assert.equal(woke, true);
 });
+
+// ---- adopting a v3 orchestrator -------------------------------------------------
+
+test('a v3 orchestrator is adopted under a lease from its budget, its repo claimed, its questions climbing', async () => {
+  const { f } = await started();
+  const run = new FakeRun({ repo: '/r', goal: 'v3 goal', budgetTokens: 50_000, maxWorkers: 2 });
+  run.ledger.spent = 12_000;
+  const session = new FakeSession({ id: 'O' });
+  const out = f.adopt({ run, session, token: 'v3-token' });
+  assert.equal(out.id, 'O1');
+  assert.equal(f.leases.get('O1').tokens, 50_000);
+  assert.equal(f.leases.get('O1').spent, 12_000);
+  assert.deepEqual(out.claim.granted, ['**']);
+  const role = f.resolve('v3-token');
+  assert.ok(role.tools.some(([n]) => n === 'ask_human'), 'it keeps the tools it was started with');
+  const asked = role.call('ask_human', { question: 'Which DB?', worker: 'w1' });
+  assert.equal(f.listOrchestrators().questions[0].question, 'Which DB?');
+  f.answer('q1', 'Postgres', 'already decided for O2');
+  assert.deepEqual(await asked, { answer: 'Postgres', by: 'H' });
+  // Its starts now go through the fleet's gate.
+  f.advance(121 * 60_000);
+  assert.match((await role.call('spawn_worker', { task: 'x' })).error, /expired/);
+});
+
+test("adoption is refused when the run's budget doesn't fit what's left", async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 90_000, slots: 2, expires: 60 });
+  const run = new FakeRun({ repo: '/r', goal: 'v3', budgetTokens: 20_000, maxWorkers: 1 });
+  run.ledger.spent = 0;
+  assert.match(f.adopt({ run, session: new FakeSession({}), token: 't' }).error, /can't adopt/);
+});
