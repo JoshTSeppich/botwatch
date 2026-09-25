@@ -8,7 +8,7 @@
 // The contract is the one the official plugin examples use: describe the
 // refusal on stderr and exit 2, which blocks the call and tells Claude why.
 
-import { isRepoWrite } from './policy.js';
+import { isRepoWrite, refusedIsolation } from './policy.js';
 
 let input = '';
 process.stdin.on('data', (c) => {
@@ -20,6 +20,16 @@ process.stdin.on('end', () => {
     event = JSON.parse(input);
   } catch {
     process.exit(0);
+  }
+
+  if (event?.tool_name === 'Agent' || event?.tool_name === 'Task') {
+    const isolation = refusedIsolation(event.tool_input);
+    if (!isolation) process.exit(0);
+    process.stderr.write(
+      `BotWatch refuses subagents with isolation "${isolation}": they would run outside this session's sandbox and budget. ` +
+        'Start the subagent without isolation; it works in this worktree.',
+    );
+    process.exit(2);
   }
 
   const command = event?.tool_input?.command;

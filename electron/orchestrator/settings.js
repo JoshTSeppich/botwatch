@@ -113,6 +113,13 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
           matcher: 'Bash',
           hooks: [{ type: 'command', command: guard }],
         },
+        {
+          // Fail closed: a crash or a missing runtime refuses the call
+          // rather than letting a cloud subagent through (a crashing hook
+          // allows the call, measured on 2.1.282).
+          matcher: 'Agent|Task',
+          hooks: [{ type: 'command', command: `${guard} || exit 2` }],
+        },
       ],
     },
     sandbox: {

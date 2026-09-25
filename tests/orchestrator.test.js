@@ -505,3 +505,17 @@ test("Claude's own credentials are hidden from the worker's Bash by the sandbox"
 test('workers are told to keep shell commands plain, since loops and $(…) are refused headless', () => {
   assert.match(WORKER_BRIEF, /loops and \$\(…\)/);
 });
+
+test('subagents that would run outside the worker are refused by the guard, and plain ones pass', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const guard = fileURLToPath(new URL('../electron/orchestrator/guard.mjs', import.meta.url));
+  const call = (tool_input) =>
+    spawnSync(process.execPath, [guard], { input: JSON.stringify({ tool_name: 'Agent', tool_input }), encoding: 'utf8' });
+  assert.equal(call({ prompt: 'x', isolation: 'remote' }).status, 2);
+  assert.match(call({ prompt: 'x', isolation: 'remote' }).stderr, /isolation "remote"/);
+  assert.equal(call({ prompt: 'x', isolation: 'worktree' }).status, 2);
+  assert.equal(call({ prompt: 'x' }).status, 0);
+  const hook = guardSettings({}).hooks.PreToolUse.find((h) => h.matcher === 'Agent|Task');
+  assert.match(hook.hooks[0].command, /\|\| exit 2$/, 'a crash refuses');
+});

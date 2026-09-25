@@ -55,6 +55,16 @@ const REPO_WRITES = [
   /\bgit\s+update-ref\b/i,
 ];
 
+// A subagent that would run somewhere else. "remote" launches it in a cloud
+// environment (Claude Code's own Agent schema says so, measured on 2.1.282):
+// a session with none of this sandbox, none of these hooks and no budget.
+// "worktree" puts it in a git worktree of its own, outside the one the
+// worker was given. Plain subagents stay in the worker's session and sandbox.
+export function refusedIsolation(toolInput) {
+  const isolation = toolInput?.isolation;
+  return isolation === 'remote' || isolation === 'worktree' ? isolation : null;
+}
+
 export function isRepoWrite(command) {
   const text = String(command ?? '');
   return REPO_WRITES.some((p) => p.test(text));
