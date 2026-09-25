@@ -15,7 +15,7 @@ measured against the real CLI; where something is unverified it says so.
 | v3 UI | **setup panel (⌥⌘O), live tree, review panel with merge** — proven end to end on the packaged app |
 | v2 (reply and approve) | **not started** |
 
-189 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
+197 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
 grepping its output. I once pushed a red test because `npm test | grep` matched the failure line.
 
 **No Co-Authored-By or AI attribution trailers in commits.** This overrides any tool default. Check
@@ -336,6 +336,17 @@ that one is not a measured refusal (it would need api.openai.com, which the shel
 The same run showed the Agent tool offers `isolation: "remote"` (a cloud session); the guard now
 refuses `remote` and `worktree` isolation fail-closed, checked by `it-escape.mjs`.
 
+**After 0.3.2, on main: the read cap and the integration scripts.** `readcap.js`, run by the
+guard hook (fail-closed, `Agent|Task|Read`), caps one Read at 32,000 bytes and one message at 4
+Reads and 64,000 bytes. Grouping calls by message was the hard part: the payload doesn't say, a
+message's calls run one after another (each Pre/Post pair completes before the next), and the
+message isn't in the transcript when the hook fires. The number of distinct assistant messages
+already in the transcript is constant across one message's calls, in the main transcript and in
+a subagent's own, so that is the key; the ledger lives in `~/.claude/botwatch/steps/`.
+`tools/it-readcap.mjs` measures it; the figures are in the design doc's rulings.
+`it-mcp`, `it-waitfor` and `smoke-worker` were rewritten for the run in pilld, and
+`tools/it-all.mjs` runs every integration script: run it at the end of every phase.
+
 ## v4 and v5
 
 The design is `docs/V4-V5-DESIGN.md`, with the rulings made after step 0 at its end. Step 0 is
@@ -356,11 +367,7 @@ Anything that must be right is a pure function with a test: `stripPlan`, `badgeT
 
 Integration scripts in `tools/` spend real tokens and need a logged-in CLI, so they are **not** in
 `npm test`: `smoke-worker`, `it-spawn`, `it-waitfor`, `it-message`, `it-diff`, `it-mcp`, `it-reap`,
-`it-recovery` (with its host, `it-recovery-host`), `it-pause`, `it-escape`, `it-snapshot`.
+`it-recovery` (with its host, `it-recovery-host`), `it-pause`, `it-escape`, `it-snapshot`, `it-readcap`.
 
-Before 0.3.2 shipped these passed against the real CLI: `it-spawn`, `it-diff`, `it-message`,
-`it-recovery`, `it-pause`, `it-escape`, `it-snapshot`. Three are stale and fail the same way on
-v0.3.1 as on 0.3.2, so they are not regressions, but they need rewriting: `it-mcp` launches
-`mcp.js` with a `BOTWATCH_RUN` env that the relay no longer reads (the run lives in pilld now);
-`it-waitfor` gets "BotWatch closed the connection" for the same reason; `smoke-worker` reports
-`state: done` and still exits 1.
+`node tools/it-all.mjs` runs all of them (plus `it-readcap`), each on a fresh repo, and prints a
+summary. All pass as of the read cap.
