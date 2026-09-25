@@ -516,6 +516,6 @@ test('subagents that would run outside the worker are refused by the guard, and 
   assert.match(call({ prompt: 'x', isolation: 'remote' }).stderr, /isolation "remote"/);
   assert.equal(call({ prompt: 'x', isolation: 'worktree' }).status, 2);
   assert.equal(call({ prompt: 'x' }).status, 0);
-  const hook = guardSettings({}).hooks.PreToolUse.find((h) => h.matcher === 'Agent|Task');
+  const hook = guardSettings({}).hooks.PreToolUse.find((h) => h.matcher === 'Agent|Task|Read');
   assert.match(hook.hooks[0].command, /\|\| exit 2$/, 'a crash refuses');
 });

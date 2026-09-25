@@ -9,6 +9,7 @@
 // refusal on stderr and exit 2, which blocks the call and tells Claude why.
 
 import { isRepoWrite, refusedIsolation } from './policy.js';
+import { checkRead } from './readcap.js';
 
 let input = '';
 process.stdin.on('data', (c) => {
@@ -20,6 +21,15 @@ process.stdin.on('end', () => {
     event = JSON.parse(input);
   } catch {
     process.exit(0);
+  }
+
+  if (event?.tool_name === 'Read') {
+    // Throws on anything unexpected; the hook is wired `|| exit 2`, so that
+    // refuses too.
+    const verdict = checkRead(event);
+    if (verdict.ok) process.exit(0);
+    process.stderr.write(verdict.reason);
+    process.exit(2);
   }
 
   if (event?.tool_name === 'Agent' || event?.tool_name === 'Task') {

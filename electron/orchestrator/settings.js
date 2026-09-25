@@ -115,9 +115,10 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
         },
         {
           // Fail closed: a crash or a missing runtime refuses the call
-          // rather than letting a cloud subagent through (a crashing hook
-          // allows the call, measured on 2.1.282).
-          matcher: 'Agent|Task',
+          // rather than letting it through (a crashing hook allows the call,
+          // measured on 2.1.282). Agent and Task: subagents stay in the
+          // worker. Read: the cap on what one step can read (readcap.js).
+          matcher: 'Agent|Task|Read',
           hooks: [{ type: 'command', command: `${guard} || exit 2` }],
         },
       ],
