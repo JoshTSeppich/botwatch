@@ -9,6 +9,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { AUTH_ENV } from './refguard.js';
 import { scriptShellCommand } from './runtime.js';
 
 // Anthropic only, by default. Not github.com: a worker has no business
@@ -102,6 +103,8 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
       // to an approval prompt that, headless, nobody would answer anyway.
       network: { allowedDomains: domains, strictAllowlist: true },
       filesystem: { denyRead: secrets },
+      // The CLI authenticates with these if they are set; its Bash never sees them.
+      credentials: { envVars: AUTH_ENV.map((name) => ({ name, mode: 'deny' })) },
     },
     ...(deny.length ? { permissions: { deny } } : {}),
   };

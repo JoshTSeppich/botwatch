@@ -240,7 +240,7 @@ test('the guarded environment marks the session and removes any push target', ()
   assert.equal(env.GIT_CONFIG_KEY_0, 'remote.origin.pushurl');
   assert.match(env.GIT_CONFIG_VALUE_0, /botwatch-push-disabled/);
   assert.equal(env.GIT_TERMINAL_PROMPT, '0', 'never sit waiting on a credential prompt');
-  assert.equal(env.PATH, '/usr/bin', 'the rest of the environment is passed through');
+  assert.equal(env.PATH, '/usr/bin', 'PATH is on the allowlist');
 });
 
 test('the guarded environment marks the session and removes any push target', () => {
@@ -249,7 +249,7 @@ test('the guarded environment marks the session and removes any push target', ()
   assert.equal(env.GIT_CONFIG_KEY_0, 'remote.origin.pushurl');
   assert.match(env.GIT_CONFIG_VALUE_0, /botwatch-push-disabled/);
   assert.equal(env.GIT_TERMINAL_PROMPT, '0', 'never sit waiting on a credential prompt');
-  assert.equal(env.PATH, '/usr/bin', 'the rest of the environment is passed through');
+  assert.equal(env.PATH, '/usr/bin', 'PATH is on the allowlist');
 });
 
 test('pilld refuses to merge anything that is not a worker branch', async () => {
@@ -462,4 +462,31 @@ test("a worker's settings carry the run's install choice", () => {
   const on = settingsOf(workerArgs({ model: 'haiku', permissionMode: 'acceptEdits', allowInstalls: true }));
   assert.equal(off.sandbox.network.allowedDomains.includes('registry.npmjs.org'), false);
   assert.equal(on.sandbox.network.allowedDomains.includes('registry.npmjs.org'), true);
+});
+
+test("a worker's environment is an allowlist: the launching shell's secrets stay behind", async () => {
+  const { guardedEnv, allowedEnv } = await import('../electron/orchestrator/refguard.js');
+  const launching = {
+    PATH: '/usr/bin', HOME: '/Users/me', LANG: 'en_US.UTF-8', LC_ALL: 'C', TERM: 'xterm',
+    BOTWATCH_CANARY_SECRET: 'canary', AWS_SECRET_ACCESS_KEY: 'aws', GITHUB_TOKEN: 'gh', OPENAI_API_KEY: 'oa',
+    NPM_TOKEN: 'npm', DATABASE_URL: 'postgres://u:p@h/db', SSH_AUTH_SOCK: '/tmp/agent',
+    ANTHROPIC_API_KEY: 'sk-ant', CLAUDE_CODE_OAUTH_TOKEN: 'oauth', HTTPS_PROXY: 'http://proxy',
+  };
+  const env = guardedEnv(launching);
+  for (const gone of ['BOTWATCH_CANARY_SECRET', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'OPENAI_API_KEY', 'NPM_TOKEN', 'DATABASE_URL', 'SSH_AUTH_SOCK']) {
+    assert.equal(gone in env, false, gone);
+  }
+  for (const kept of ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TERM', 'HTTPS_PROXY']) assert.equal(env[kept], launching[kept], kept);
+  assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant', 'the CLI still authenticates');
+  assert.equal(env.BOTWATCH_GUARD, '1');
+  // Test runs get the allowlist without the credentials at all.
+  const tests = allowedEnv(launching, { credentials: false });
+  assert.equal('ANTHROPIC_API_KEY' in tests || 'CLAUDE_CODE_OAUTH_TOKEN' in tests, false);
+  assert.equal(tests.PATH, '/usr/bin');
+});
+
+test("Claude's own credentials are hidden from the worker's Bash by the sandbox", async () => {
+  const { AUTH_ENV } = await import('../electron/orchestrator/refguard.js');
+  const denied = guardSettings({}).sandbox.credentials.envVars;
+  for (const name of AUTH_ENV) assert.ok(denied.some((d) => d.name === name && d.mode === 'deny'), name);
 });

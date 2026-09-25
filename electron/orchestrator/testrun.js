@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { allowedEnv } from './refguard.js';
+
 const execFile = promisify(execFileCb);
 
 const TIMEOUT_MS = 5 * 60_000;
@@ -70,7 +72,9 @@ export async function runTests(worktree, command, { timeoutMs = TIMEOUT_MS } = {
     : ['sh', ['-c', command]];
 
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd: worktree, env: { ...process.env, CI: '1' } });
+    // Worker-written tests get the same allowlisted environment, without even
+    // the credentials: a test has no business with an API key.
+    const child = spawn(bin, args, { cwd: worktree, env: { ...allowedEnv(process.env, { credentials: false }), CI: '1' } });
     let output = '';
     const keep = (chunk) => {
       output = (output + chunk).slice(-64_000);

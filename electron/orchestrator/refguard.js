@@ -131,7 +131,7 @@ export async function uninstall(repo) {
 // the hook, and takes away the ability to push at all.
 export function guardedEnv(base = process.env) {
   return {
-    ...base,
+    ...allowedEnv(base),
     BOTWATCH_GUARD: '1',
     GIT_TERMINAL_PROMPT: '0',
     GIT_ASKPASS: '/usr/bin/false',
@@ -139,4 +139,36 @@ export function guardedEnv(base = process.env) {
     GIT_CONFIG_KEY_0: 'remote.origin.pushurl',
     GIT_CONFIG_VALUE_0: '/dev/null/botwatch-push-disabled',
   };
+}
+
+// What a spawned session's environment is built from: an allowlist, not
+// "everything minus a denylist". Whatever the shell that launched BotWatch
+// exported — tokens, keys, a secret in a dotenv you sourced — does not reach a
+// worker unless it is on this list.
+export const ENV_ALLOW = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TZ',
+  'TERM', 'COLORTERM', 'LANG', 'LANGUAGE', '__CF_USER_TEXT_ENCODING',
+  'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME',
+  // Reaching Anthropic through a proxy or a corporate CA.
+  'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy',
+  'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE',
+  'CLAUDE_CONFIG_DIR',
+];
+const ALLOW_PREFIXES = ['LC_', 'CLAUDE_CODE_', 'ANTHROPIC_'];
+
+// Credentials Claude Code authenticates with, when they come from the
+// environment. The CLI needs them; the worker's shell must not see them, so
+// they are also denied to Bash through the sandbox (settings.js).
+export const AUTH_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+export function allowedEnv(base = process.env, { credentials = true } = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (value == null) continue;
+    const allowed = ENV_ALLOW.includes(key) || ALLOW_PREFIXES.some((p) => key.startsWith(p));
+    if (!allowed) continue;
+    if (!credentials && AUTH_ENV.includes(key)) continue;
+    out[key] = value;
+  }
+  return out;
 }
