@@ -96,6 +96,7 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots) =>
     'Call wait_for with every worker id. When they are done, check each with worker_diff and read_worker.',
     'If a worker failed, you may message_worker it once with what to fix, then wait_for it again.',
     "If a worker is asking, answer it with message_worker if your goal and repo settle it (naming, approach, tests), and say which rule you used.",
+    'If pilld paused a worker for changing files outside your claim (outsideClaim in its entry), it stays paused: stop_worker it and start a new one with a clearer task, or ask_up.',
     'Pass up with ask_up: deleting shared files, schema changes, and anything touching another claim, with your suggestion. Send the answer on to the worker.',
     'Call report with a short summary after each milestone. If your lease runs low, call request_lease with a reason.',
     'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker.',

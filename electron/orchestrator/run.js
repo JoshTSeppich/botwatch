@@ -423,6 +423,8 @@ export class Run extends EventEmitter {
       summary: w.summary ?? null,
       question: w.question ?? null,
       takenOver: Boolean(w.takenOver),
+      // v4: paused by pilld for changing these paths outside its claim.
+      ...(w.claimViolations?.length ? { outsideClaim: w.claimViolations } : {}),
       sessionId: w.sessionId,
     }));
   }

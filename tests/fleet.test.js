@@ -573,3 +573,15 @@ test('the enforcement hook runs on every tool, fail-closed', async () => {
   assert.equal(hook.matcher, '*');
   assert.match(hook.hooks[0].command, /\|\| exit 2$/);
 });
+
+test('wait_for returns when pilld pauses a worker for writing outside its claim, and says which paths', async () => {
+  const { waitFor } = await import('../electron/orchestrator/tools.js');
+  const run = new FakeRun({ repo: '/r', budgetTokens: 1, maxWorkers: 1 });
+  run.list = () => run.workers.map((w) => ({ id: w.id, state: w.state, ...(w.claimViolations ? { outsideClaim: w.claimViolations } : {}) }));
+  await run.spawn('a');
+  const waiting = waitFor(run, ['w1'], 'done');
+  run.workers[0].state = 'paused';
+  run.workers[0].claimViolations = ['test-write.txt'];
+  run.emit('change');
+  assert.deepEqual((await waiting)[0].outsideClaim, ['test-write.txt']);
+});
