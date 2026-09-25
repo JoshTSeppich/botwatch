@@ -54,6 +54,15 @@ still works, from transcripts alone, with the limits listed under "What it can't
 To update after installing a new BotWatch: `claude plugin marketplace update botwatch`, then
 `claude plugin update botwatch@botwatch`. To remove it: `claude plugin uninstall botwatch@botwatch`.
 
+**To orchestrate** (new in 0.2.0), press `⌥⌘O` over the pill. There is nothing more to grant:
+workers are Claude Code sessions that use your existing `claude` login, so the `claude` CLI has to
+be installed and logged in. Each worker runs in Claude Code's sandbox. It can write only inside
+its own git worktree, it can't read your credential files, and it reaches only Anthropic's API.
+**Package installs** is off by default. Turn it on in the setup panel for a run whose workers
+need npm, PyPI or crates.io. What workers may do (**Workers may** in setup) starts at
+`acceptEdits` and is never allowed past the mode your own sessions run in. Nothing a worker does
+reaches your branch until you review it and click Merge. See "Orchestrating" below.
+
 **It has no Dock icon.** It's an accessory app: the pill is the interface. There's a small pill
 glyph in the menu bar for the one thing the pill can't do — quitting. Right-clicking the pill
 gives you the same menu.
@@ -81,7 +90,8 @@ Clicking the pill triggers the system prompts. If you already said no once, macO
 again, so clicking it opens the right pane of System Settings instead. The pill notices the
 moment you grant access — no relaunch.
 
-That's all it asks for. No network, no disk access beyond `~/.claude`, no login. The hook socket
+That's all it asks for. No network, no disk access beyond `~/.claude`, no login. Orchestrating
+asks for nothing extra: its sessions use the `claude` login you already have. The hook socket
 is `~/.claude/botwatch/pilld.sock`, readable and writable by you alone.
 
 ## What you're looking at
