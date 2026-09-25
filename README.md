@@ -141,7 +141,8 @@ its own git worktree on a `bw/` branch. The pill shows the run as a tree while i
 When a worker finishes, BotWatch commits its worktree to its branch and runs your tests against
 that commit, sandboxed: no network, no writes outside the worktree. **Review and merge** then
 shows, per worker: the branch, the snapshot commit and when it was taken, the test command and its
-result, and the files, with edits and new files listed separately. Files that look like they
+result, and the files, with edits and new files listed separately. **Review in terminal** opens
+the diff of that exact commit, against where its branch left yours. Files that look like they
 shouldn't be merged — a `.env`, build output, keys, anything that smells of a secret — are flagged,
 and Merge refuses until you tick each one by name. What merges is the exact commit you reviewed;
 if a worker ran again since, Merge refuses and asks you to look again. Each branch lands as its own

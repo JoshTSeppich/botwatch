@@ -172,9 +172,10 @@ brief is what makes the failure clear, not npm.
 
 **Open**
 
-- **The pill shows which files changed, not the changes.** "Review in terminal", which would open
-  the diff, is not built. Today you review the actual code in your own tools, from the branch name
-  and SHA the panel gives you.
+- **The changes themselves are in a terminal, not the pill.** Each review card's **Review in
+  terminal** opens the diff of exactly the reviewed commit against where its branch left the base,
+  with external diff drivers and textconv off, so nothing a worker committed can make git run a
+  program. Reading it is still up to you.
 - Failing tests are shown in red, but they don't block a merge. That's deliberate: a known-failing
   test can be the thing being fixed.
 - Flags are heuristics. A secret in an innocent-looking file with an unrecognised format passes.

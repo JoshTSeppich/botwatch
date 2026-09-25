@@ -248,6 +248,15 @@ resumed session opened on the worker's conversation. Found on the way:
   the one-second tick and could swallow the 2.6s line. The window now sets
   `backgroundThrottling: false`.
 
+**Review in terminal: done.** Each review card opens `git diff <fork point> <reviewed SHA>` in
+Terminal (`Run.diffCommand`). It works only for this run's branches, and only for a commit on
+that branch. It uses `--no-ext-diff --no-textconv`, and every argument is shell-quoted. Proven
+live: after w1 merged, w2's terminal diff showed only w2's two files. Found and fixed on the way:
+`review()` diffed against the base's **tip**, so after one worker merged, every other worker's
+review showed that merge reversed. It now diffs from the fork point (`forkPoint`). The
+regression test fails on the old code. Workers are also told to keep shell commands plain
+(loops and `$(…)` are refused headless).
+
 **Demo: done.** `docs/demo.gif` and `docs/demo.mp4`: 60s, recorded with `tools/record-pill.mjs`,
 which records the pill's own page over the DevTools port and never the screen behind it, so nothing
 else is in it. Worker waits play 8× faster (the driver sets a mode file); everything else is real
