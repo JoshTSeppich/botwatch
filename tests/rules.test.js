@@ -134,3 +134,28 @@ test('raising a session puts its terminal in fullscreen by default, as the spec 
   assert.equal(FULLSCREEN, process.env.PILL_FULLSCREEN !== '0');
   if (process.env.PILL_FULLSCREEN === undefined) assert.equal(FULLSCREEN, true);
 });
+
+test('the app never turns on remote debugging or the inspector itself', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (/\.(c|m)?js$/.test(entry.name)) files.push(path);
+    }
+  };
+  walk('electron');
+  walk('src');
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    assert.doesNotMatch(text, /remote-debugging|appendSwitch\s*\(|['"]--inspect/, file);
+  }
+  // And the packaged app ignores --inspect and NODE_OPTIONS; it keeps run-as-node,
+  // which the guard hook and the MCP relay run on.
+  const { createRequire } = await import('node:module');
+  const { FUSES } = createRequire(import.meta.url)('../build/after-pack.cjs');
+  assert.deepEqual(FUSES, { runAsNode: true, enableNodeCliInspectArguments: false, enableNodeOptionsEnvironmentVariable: false });
+  assert.equal(JSON.parse(readFileSync('package.json', 'utf8')).build.electronFuses, undefined, 'flipped in afterPack, before signing, not after');
+});

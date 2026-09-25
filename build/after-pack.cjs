@@ -10,8 +10,19 @@
 const { execFileSync } = require('node:child_process');
 const { join } = require('node:path');
 
+// Electron's fuses, flipped here rather than through electron-builder's
+// electronFuses setting: that flips them after this hook, which breaks the
+// signature made below. Run-as-node stays on — the guard hook and the MCP
+// relay run on this binary in node mode. --inspect and NODE_OPTIONS are off.
+exports.FUSES = {
+  runAsNode: true,
+  enableNodeCliInspectArguments: false,
+  enableNodeOptionsEnvironmentVariable: false,
+};
+
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
+  await context.packager.addElectronFuses(context, await context.packager.generateFuseConfig(exports.FUSES));
   const app = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   // Taken from the build config rather than repeated here: two copies of an
   // identifier that macOS keys permission grants on is one too many.
