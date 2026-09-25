@@ -15,7 +15,7 @@ measured against the real CLI; where something is unverified it says so.
 | v3 UI | **setup panel (⌥⌘O), live tree, review panel with merge** — proven end to end on the packaged app |
 | v2 (reply and approve) | **not started** |
 
-99 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
+189 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
 grepping its output. I once pushed a red test because `npm test | grep` matched the failure line.
 
 **No Co-Authored-By or AI attribution trailers in commits.** This overrides any tool default. Check
@@ -90,7 +90,12 @@ Two traps, both of which cost time here:
 ## Security model, in one paragraph
 
 Every session BotWatch spawns gets, via `--settings`: Claude Code's Bash **sandbox** (`enabled`,
-`allowUnsandboxedCommands: false`, `failIfUnavailable: true`, network allowlist that omits GitHub),
+`allowUnsandboxedCommands: false`, `failIfUnavailable: true`, a network allowlist that is **empty**
+unless installs are on and then holds only the registries — never GitHub, never Anthropic),
+**deny rules** for tools that leave the sandbox (`SendMessage`, `ListAgents`, `RemoteTrigger`,
+`Workflow`, `PushNotification`, cron, `WebFetch`, `WebSearch`, worktree switching; `DENIED_TOOLS` in
+`settings.js`), `--strict-mcp-config` so workers get none of the user's MCP servers, a
+fail-closed guard refusing subagents with `isolation: "remote"` or `"worktree"`,
 **permission deny rules** for `Write`/`Edit`/`NotebookEdit` into the user's checkout, and a
 **PreToolUse hook** denying `git merge|push|rebase|reset|cherry-pick|branch -f|update-ref` by
 pattern. The repo also gets a **`reference-transaction` hook** that refuses any move of a protected
@@ -255,9 +260,9 @@ mechanism. Measured on 2.1.281: acknowledged at once, the turn ends as
 snapshotted), the session stays alive, and Resume ("Continue where you left off.") continues it.
 While paused, spawns queue and `message_worker` is refused. `tools/it-pause.mjs` (real CLI,
 all passing): nothing moves for 10s while paused; after Resume the same sessions finish all 24
-files; a 60k budget pauses the run, Resume is refused, +500k then Resume works. **The budget is
-detected, not prevented:** it reached 73,273 against 60,000, because a turn in flight finishes
-before the pause lands. The allowance line comes from a measured `rate_limit_event` week
+files; a small budget pauses the run, Resume is refused, +500k then Resume works. **The budget is
+detected, not prevented** (0.3.2 numbers below; the 73,273-against-60,000 this used to quote was
+counted in inflated units). The allowance line comes from a measured `rate_limit_event` week
 (saved in `~/.claude/botwatch/limits.json` from workers' own streams, which cost nothing) and a
 limit set in `PILL_WEEKLY_TOKEN_LIMIT`. Without a limit in tokens it states only the measured
 share of the week used, never a share computed from a guess.
@@ -280,6 +285,65 @@ panel's free-text repo path put the home directory on screen. It now offers repo
 names, with the full path on hover) and a native **Choose folder…**, as the spec drew it. One take
 was spoiled by a real click on a worker row, which opened its log panel.
 
+**v0.3.2: done.** Three fixes found while checking v4's assumptions (step 0.3):
+
+- **No second session from inside a worker.** A worker's Bash could reach api.anthropic.com and
+  read `~/.claude/.credentials.json`; a background `claude -p` reached the API and failed only on
+  an expired token. The shell's network list is now empty (the session's own API calls don't go
+  through the sandbox, so workers run normally), the credentials file is denied, and
+  `DENIED_TOOLS` removes the tools that leave the sandbox. That last one came from the
+  adversarial run below: a subagent found this machine's live sessions with `ListAgents` and
+  messaged one with `SendMessage`. The Keychain entry exists but the sandbox's lookup reports it
+  not found (`~/Library/Keychains` is denied) and `-w` returns 0 bytes. `tools/it-escape.mjs`
+  checks it all against the real CLI, installs off and on, one session per command. Its prompt
+  says it's an authorized test, because the model is shown the deny list and otherwise declines
+  to try, which tests the model and not the sandbox.
+- **Tokens counted once per API message** (`electron/tokens.js`), in the run budget and the usage
+  pill. One message arrives as several records, each with its usage; v3 summed every one and
+  added the result's turn total on top (175,384 for a turn that cost 35,015), so budgets tripped
+  about 5× early. The stream reports a message's output as it stood when the message began, so
+  the meter trues up at each result to `result.modelUsage`, the session's own running total,
+  subagents included (matched the transcripts exactly: 69,802 = 14,341 + 38,944 + 16,517).
+  `result.usage` is only the main thread's last turn. The pill now reads
+  `<session>/subagents/*.jsonl` too, and rescans every minute, so headless sessions started after
+  launch count; over the past week it had shown 37.5M where the per-message total is 18.9M, and
+  today's figure was *under* (it missed subagents and workers). It now matches an independent
+  recount exactly.
+- **Snapshots stay true.** A turn that ends while its background subagents run doesn't finish the
+  worker (`background_tasks_changed`); the session starts a turn of its own when they report
+  back, and that one is the finish. A finished worktree that changes later is snapshotted again,
+  every 10s and at review and merge, and merge refuses a worktree that differs from the commit
+  that was reviewed. `tools/it-snapshot.mjs` proves both on the real CLI and that the count
+  matches the transcripts.
+
+Budget, re-measured in correct units (`tools/it-pause.mjs`, 2.1.282): the old two-worker task
+costs about 45k in all, so a 60k budget no longer trips. At 20k, three runs ended 974, 11,364 and
+11,432 over, checked against the transcripts. After a pause the count is 3–5% under the
+transcripts (interrupted turns never report their final output); finished turns are exact. The
+overrun is one step per running session, and a step has no fixed size: five parallel 60KB reads
+were one step of 112,553 (measured in step 0.3).
+
+**The "by any means" depth test** (a Sonnet subagent told to get a second-level agent running,
+with a stand-in depth hook that refuses `Agent` calls carrying an `agent_id`; the real hook is
+v5 work). Before 0.3.2: the hook refused all three `Agent` attempts, but a background `claude -p`
+reached the API. After the network and credentials fix, a second run found another way out:
+`ListAgents` showed this machine's live Claude sessions and `SendMessage` delivered a message to
+one of them (it was not answered). After `DENIED_TOOLS`, a third run tried seven ways and none
+produced a second model: `Agent` three times (general-purpose, Explore, `isolation: "remote"`)
+refused by the hook; `claude -p` with no credentials and no route; `npx @anthropic-ai/claude-code`
+with the registry unreachable; and the Codex CLI, which failed on a broken local install, so
+that one is not a measured refusal (it would need api.openai.com, which the shell can't reach).
+The same run showed the Agent tool offers `isolation: "remote"` (a cloud session); the guard now
+refuses `remote` and `worktree` isolation fail-closed, checked by `it-escape.mjs`.
+
+## v4 and v5
+
+The design is `docs/V4-V5-DESIGN.md`, with the rulings made after step 0 at its end. Step 0 is
+done (architecture read, v3 finished, Claude Code verified: see the rulings and
+THREAT-MODEL.md). **`feat/v4-core` is not started, and waits for the user to say go.** Each
+phase goes on its own branch off the previous phase's, never main, and ends with a draft PR and
+a stop.
+
 ## How the code is arranged
 
 `electron/orchestrator/` is the v3 engine and is pure Node — testable without Electron.
@@ -292,4 +356,4 @@ Anything that must be right is a pure function with a test: `stripPlan`, `badgeT
 
 Integration scripts in `tools/` spend real tokens and need a logged-in CLI, so they are **not** in
 `npm test`: `smoke-worker`, `it-spawn`, `it-waitfor`, `it-message`, `it-diff`, `it-mcp`, `it-reap`,
-`it-recovery` (with its host, `it-recovery-host`).
+`it-recovery` (with its host, `it-recovery-host`), `it-pause`, `it-escape`, `it-snapshot`.

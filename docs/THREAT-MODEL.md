@@ -50,15 +50,19 @@ previous session and recorded in `HANDOFF.md`; re-run them before relying on the
   `BOTWATCH_GUARD`. It is installed for the run and removed when the run closes, including when you
   quit mid-run.
 - The sandbox keeps workers out of the main repo's `.git`, so they can't delete that hook. It is
-  also why workers don't commit: pilld snapshots each worktree to its branch.
+  also why workers don't commit: pilld snapshots each worktree to its branch. A turn that ends
+  with subagents still running in the background isn't the finish: the snapshot waits for the
+  turn the session starts when they report back. A finished worktree that changes after its
+  snapshot is snapshotted again (checked every 10 seconds, and at review and merge).
 - pilld does the merge itself, outside the guarded environment, and only:
   - on your click, with approval lasting for that one call
   - for a worker that has finished, been snapshotted and been tested
-  - at exactly the commit you reviewed, refusing if the branch has moved since
+  - at exactly the commit you reviewed, refusing if the branch has moved since, or if the
+    worktree has changed since its snapshot (since 0.3.2)
   - as a `--no-ff` merge that names the worker and the commit
 - A conflict is aborted and names the files. A checkout that's already mid-merge is refused, not
   aborted.
-- Workers have no push target. The network allowlist leaves out GitHub, and the guarded
+- Workers have no push target. Their shell reaches no host, and the guarded
   environment removes push URLs and credential prompts.
 - `merge_worktrees` never merges, even with approval set. The model can't reach the click.
 
@@ -89,13 +93,27 @@ this section is about the files a worker is kept from reading, and the network i
   sandbox's `filesystem.denyRead`, which also applies to anything Bash runs. The locations are
   `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.azure`, `~/.kube`, `~/.docker/config.json`,
   `~/.gnupg`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`,
-  `~/Library/Keychains`, `~/Library/Cookies`, Safari, and the Chrome, Firefox, Brave, Edge and Arc
+  Claude Code's own `~/.claude/.credentials.json` (since 0.3.2), `~/Library/Keychains`, `~/Library/Cookies`, Safari, and the Chrome, Firefox, Brave, Edge and Arc
   profiles (`SECRET_PATHS` in `settings.js`).
 - **This is a denylist, not confinement.** Everything not on the list is still readable: other
   dotfiles, other repos, your documents. A secret kept anywhere else is readable.
-- **Network is Anthropic only** by default, with `strictAllowlist`, so an off-list host is refused
-  outright rather than sent to an approval prompt. The package registries (npm, PyPI, crates.io)
-  are opened only when setup's **Package installs** is on for that run.
+- **A worker's shell reaches no host at all** by default, with `strictAllowlist`, so any host is
+  refused outright rather than sent to an approval prompt. The session's own calls to the API
+  don't go through the sandbox, so a worker runs normally with an empty list. The package
+  registries (npm, PyPI, crates.io) are opened only when setup's **Package installs** is on for
+  that run, and Anthropic is never on the list.
+- **Tools that leave the sandbox are denied** to every session BotWatch spawns, by deny rules, which
+  win over any allow rule in your settings or the repo's and over `bypassPermissions`:
+  `SendMessage` and `ListAgents` (other local Claude sessions, yours included), `RemoteTrigger` and
+  `Workflow` (more sessions), `PushNotification` (you), `CronCreate`/`CronDelete`/`ScheduleWakeup`,
+  `WebFetch` and `WebSearch` (fetched by the CLI's own process, so the sandbox's list never applies),
+  `DesignSync`, and `EnterWorktree`/`ExitWorktree`. Workers get none of your MCP servers
+  (`--strict-mcp-config`); the orchestrator gets only BotWatch's.
+- **Subagents stay in the worker.** The Agent tool can start a subagent with `isolation: "remote"`,
+  which its own schema describes as launching it in a remote cloud environment, or `"worktree"`,
+  a git worktree of its own. The guard hook refuses both (exit 2), and it is wired fail-closed
+  (`… || exit 2`), because a hook that crashes lets the call through. Plain subagents run in the
+  worker's own session, sandbox and budget.
 - Workers can't reach BotWatch's sockets. The orchestrator's control socket is also 0600 and needs a
   per-run token.
 - Tests run under BotWatch's own Seatbelt profile: no network past loopback, and writes only in the
@@ -115,6 +133,26 @@ Test runs get the allowlist without any credentials.
 Measured: a real worker launched from a shell exporting `BOTWATCH_CANARY_SECRET` ran `env` and saw
 64 variables, none of them the canary, and still authenticated and did its task. The sandbox deny,
 shown with a harmless `ANTHROPIC_PROBE`: the CLI had it, and its Bash printed `probe=[unset]`.
+
+**A second session, from inside a worker** (fixed in 0.3.2). A session started from a worker has
+none of BotWatch's hooks, no budget and no depth limit. Measured on 2.1.282, before the fix:
+
+| From a worker | 0.3.1 | 0.3.2 |
+| --- | --- | --- |
+| `curl https://api.anthropic.com` from Bash | reached (401) | refused by the sandbox |
+| `cat ~/.claude/.credentials.json` (an OAuth access and refresh token) | **read** | refused |
+| background `claude -p` from Bash | **reached the API**; failed only because the token it found had expired | refused by the sandbox |
+| `npx @anthropic-ai/claude-code -p` with installs on | not tried | downloads, then refused by the sandbox |
+| `security find-generic-password -s "Claude Code-credentials"` (the Keychain entry exists: found from a normal shell) | not tried | "could not be found in the keychain"; `-w` returned 0 bytes |
+| `SendMessage` to another local session, found with `ListAgents` | **delivered**: a subagent's message reached a live session on this machine | tool not present |
+| `WebFetch` / `WebSearch` | refused only because nobody headless approves them; a `bypassPermissions` worker would get them | tool not present |
+| Agent tool with `isolation: "remote"` (a cloud session) | offered by the tool's schema; not tried, since it would have started one | refused by the guard before anything starts |
+
+The Keychain row was measured, not reasoned: the lookup fails from the sandbox, where
+`~/Library/Keychains` is denied. `tools/it-escape.mjs` repeats the table's 0.3.2 column against the
+real CLI, installs off and on, and checks that none of the denied tools and none of your MCP
+servers reach a worker. An adversarial run, a subagent told to get a second-level agent running
+"by any means", is described in HANDOFF.
 
 **Measured**
 
@@ -184,10 +222,23 @@ brief is what makes the failure clear, not npm.
 
 ## Also in scope
 
-- **Token budget.** Counted from the tokens each turn reports and enforced by pausing the run when
-  it's spent: **detected, not prevented.** A turn in flight finishes first. Measured: 73,273
-  tokens against a 60,000 budget. Resuming needs the user to raise the budget from the pill; no
-  tool can.
+- **Token budget.** Counted once per API message (input + output + cache writes) as the stream
+  reports it, trued up to the session's own total at each turn's end, and enforced by pausing the
+  run when it's spent: **detected, not prevented.** The step that crosses the line is already
+  spent, and every running session can take one. Measured on 2.1.282 with a 20,000 budget, two
+  haiku workers and the orchestrator, three runs: 974, 11,364 and 11,432 tokens over, checked
+  against the transcripts. The overrun is bounded by one step per running session, not by a fixed
+  number: a step is whatever tool output enters the context at once, and five parallel 60KB reads
+  made one step of 112,553. After a pause the count runs 3–5% under the transcripts (an interrupted
+  turn never reports its final output); finished turns match them exactly. Resuming needs the user
+  to raise the budget from the pill; no tool can.
+
+  **Before 0.3.2 every figure was too high.** One message is written as several records, one per
+  content block, each with the message's usage. The budget summed every record and then added the
+  turn's total on top: 175,384 counted for a turn that cost 35,015. v3 budgets tripped about 5×
+  early, and the "73,273 against a 60,000 budget" this file used to give was in those units; that
+  whole task costs about 45,000. The usage pill summed transcript records the same way (2.28× over
+  a week here) and never counted subagents.
 
 - **Remote debugging.** BotWatch never enables `--remote-debugging-port` or the Node inspector
   itself (a test checks the source for it). The packaged app's Electron fuses turn off `--inspect`

@@ -69,7 +69,7 @@ To update after installing a new BotWatch: `claude plugin marketplace update bot
 **To orchestrate** (new in 0.2.0), press `⌥⌘O` over the pill. There is nothing more to grant:
 workers are Claude Code sessions that use your existing `claude` login, so the `claude` CLI has to
 be installed and logged in. Each worker runs in Claude Code's sandbox. It can write only inside
-its own git worktree, it can't read your credential files, and it reaches only Anthropic's API.
+its own git worktree, it can't read your credential files, and its shell reaches no network.
 **Package installs** is off by default. Turn it on in the setup panel for a run whose workers
 need npm, PyPI or crates.io. What workers may do (**Workers may** in setup) starts at
 `acceptEdits` and is never allowed past the mode your own sessions run in. Nothing a worker does
@@ -127,14 +127,16 @@ raise that terminal. Drag the four-dot handle to move the pill; double-click the
 back.
 
 The second pill is the token budget: this week against your plan limit, this session, today, burn
-rate, and when the week resets. Set `PILL_WEEKLY_TOKEN_LIMIT` to your plan's ceiling or the
+rate, and when the week resets. Each API message counts once, subagents and BotWatch's own
+workers included (before 0.3.2 the pill summed every record of a message and showed about twice
+the real week). Set `PILL_WEEKLY_TOKEN_LIMIT` to your plan's ceiling or the
 percentage is measured against a guess of 40M.
 
 ## Orchestrating
 
 `⌥⌘O` opens the setup panel: a goal, a repo, a model, how many workers at once, a token budget,
 what workers may do (never more than your own sessions), the test command, and whether workers may
-install packages (off by default: they reach Anthropic and nothing else). Start hands the
+install packages (off by default: a worker's shell then reaches no network at all). Start hands the
 goal to an orchestrator session, which splits it into tasks and starts a worker per task, each in
 its own git worktree on a `bw/` branch. The pill shows the run as a tree while it works.
 
@@ -145,15 +147,18 @@ result, and the files, with edits and new files listed separately. **Review in t
 the diff of that exact commit, against where its branch left yours. Files that look like they
 shouldn't be merged — a `.env`, build output, keys, anything that smells of a secret — are flagged,
 and Merge refuses until you tick each one by name. What merges is the exact commit you reviewed;
-if a worker ran again since, Merge refuses and asks you to look again. Each branch lands as its own
+if a worker ran again since, or anything changed its worktree after the snapshot, Merge refuses
+and asks you to look again. A worker whose subagents are still running in the background isn't
+finished until they are. Each branch lands as its own
 `--no-ff` merge naming the worker and the commit. Nothing is ever pushed.
 
 **Pause all** interrupts every worker's turn and keeps its session. Nothing starts and nothing is
 spent while paused, and **Resume all** carries each one on from where it was. If the run's token
-budget runs out, it pauses itself and offers **+500k**. Budgets are counted from the tokens each
-turn reports, so a turn already running when the budget runs out finishes first. A run can end a
-little over its budget (measured: 73k against a 60k budget), and is never stopped early by a
-guess. The setup panel shows what the budget is as a share of your week, but only from a weekly
+budget runs out, it pauses itself and offers **+500k**. Budgets count each API message once as it
+is reported, so the step that crosses the line is already spent, and each running session can
+take one: a run ends over its budget, by up to one step per running session (measured: 974 to
+11,432 tokens over a 20k budget with two workers). It is never stopped early by a guess. Before
+0.3.2, budgets counted most messages two to five times and tripped about 5× early. The setup panel shows what the budget is as a share of your week, but only from a weekly
 limit you set (`PILL_WEEKLY_TOKEN_LIMIT`). With just a measurement from the CLI it says how much
 of the week is used and when that was measured, and with neither it says nothing.
 
@@ -202,8 +207,12 @@ absolute path, and the orchestrator runs in its own directory rather than your r
 every spawned session gets through `--settings`: `sandbox.enabled`, `allowUnsandboxedCommands:
 false` so a command that can't be sandboxed doesn't fall through to the permission flow, and
 `failIfUnavailable: true` so a session nobody is watching stops rather than running unsandboxed.
-Writes are confined to the session's own directory and the network to a short allowlist that
-deliberately leaves out GitHub.
+Writes are confined to the session's own directory. The shell reaches no host at all, unless the
+run allows package installs, and then only the registries: never GitHub, and never Anthropic,
+because a `claude -p` started from a worker's shell would be a session with no hooks and no
+budget. Tools that reach past the sandbox (messaging other Claude sessions, starting new ones,
+web fetches made by the CLI itself, notifications) are denied, and workers get none of your MCP
+servers.
 
 Measured at `bypassPermissions`, the worst case:
 
@@ -238,8 +247,8 @@ has its partial work saved to its branch for you to look at, but it can't be mer
 - **Secret locations are denied, but it's a denylist, not confinement.** Workers can't read
   `~/.ssh`, `~/.aws`, the other usual credential files, keychains or browser profiles (measured,
   at both the Read tool and Bash). Anything you keep elsewhere, they can.
-- **Package installs are off unless you turn them on for a run.** Off, a worker reaches only
-  Anthropic. On, it also reaches npm, PyPI and crates.io, and a request there can carry what it
+- **Package installs are off unless you turn them on for a run.** Off, a worker's shell reaches
+  nothing. On, it reaches npm, PyPI and crates.io, and a request there can carry what it
   read. [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) has the measurements and the rest.
 - `BOTWATCH_GUARD= git merge` still gets past the ref hook's env check. The sandbox stops the
   merge from reaching your checkout's `.git`, so this is narrower than it was, but the env check
