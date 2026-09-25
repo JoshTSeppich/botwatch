@@ -95,7 +95,6 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       extraArgs: [
         '--mcp-config',
         mcpConfig,
-        '--strict-mcp-config',
         '--allowedTools',
         'mcp__botwatch',
         '--disallowedTools',
@@ -327,6 +326,7 @@ export function runView({ run, orchestrator, startedAt, closed }, now) {
     tokens: w.tokens ?? 0,
     progress: TERMINAL.has(w.state) ? 1 : 0.5,
     snapshot: w.snapshot ?? null,
+    changedAfterSnapshot: w.changedAfterSnapshot ?? null,
     test: w.test ?? null,
     question: w.question ?? null,
     // When its turn finished, for the 1.6s row flash and the 2.6s line.

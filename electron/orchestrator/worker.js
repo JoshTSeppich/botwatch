@@ -84,8 +84,8 @@ export const WORKER_BRIEF = [
 // Said up front, so a worker that needs a package asks instead of spending its
 // turn on retries. The sandbox's own refusal names the host as well.
 export const NO_INSTALLS = [
-  'Package installs are off for this run: npm, PyPI and crates.io are unreachable, and the only',
-  'host you can reach is Anthropic\'s API. Use what is already installed. If the task cannot be',
+  'Package installs are off for this run: your shell cannot reach the network at all, so npm, PyPI',
+  'and crates.io are unreachable. Use what is already installed. If the task cannot be',
   "done without installing something, don't work around it: end your turn with 'QUESTION:' naming",
   'the package and why, so the user can rerun with installs allowed.',
 ].join('\n');
@@ -112,6 +112,9 @@ export function workerArgs({ model, permissionMode, protect = [], allowInstalls 
     // only limit and a worker can merge its own branch.
     '--settings',
     JSON.stringify(guardSettings({ protect, allowInstalls })),
+    // None of the user's MCP servers: a browser, mail, docs — each a way out
+    // the sandbox never sees. The orchestrator adds BotWatch's own.
+    '--strict-mcp-config',
   ];
 }
 

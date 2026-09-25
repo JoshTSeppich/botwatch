@@ -288,10 +288,34 @@ test('every spawned session is sandboxed with no way to fall back out of it', ()
   assert.equal(s.sandbox.autoAllowBashIfSandboxed, true, 'sandboxed commands run without a prompt nobody can answer');
 });
 
-test('workers cannot reach a git remote through the sandbox network allowlist', () => {
+test("a worker's shell reaches no host at all by default: no remote, and not Anthropic", () => {
   const domains = guardSettings({}).sandbox.network.allowedDomains;
-  assert.ok(domains.includes('api.anthropic.com'), 'the model has to be reachable');
+  assert.deepEqual(domains, [], 'the session reaches the API itself; its shell has no need to');
   assert.equal(domains.some((d) => d.includes('github')), false, 'no path to a remote');
+});
+
+test('with installs allowed, the shell reaches the registries and still not Anthropic', () => {
+  const domains = guardSettings({ allowInstalls: true }).sandbox.network.allowedDomains;
+  assert.ok(domains.includes('registry.npmjs.org'));
+  assert.equal(domains.some((d) => d.includes('anthropic')), false, 'a nested claude -p would reach the API');
+});
+
+test('tools that reach other sessions, the user or the network outside the sandbox are denied', () => {
+  const deny = guardSettings({}).permissions.deny;
+  for (const tool of ['SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow', 'PushNotification', 'WebFetch', 'WebSearch', 'CronCreate']) {
+    assert.ok(deny.includes(tool), tool);
+  }
+  assert.equal(deny.includes('Task'), false, 'built-in subagents are v5 policy, not a blanket deny');
+});
+
+test("a worker gets none of the user's MCP servers", () => {
+  assert.ok(workerArgs({ model: 'haiku', permissionMode: 'acceptEdits' }).includes('--strict-mcp-config'));
+});
+
+test("Claude Code's own credentials file is denied to the Read tool and the shell", () => {
+  const s = guardSettings({ home: '/Users/me' });
+  assert.ok(s.sandbox.filesystem.denyRead.includes('/Users/me/.claude/.credentials.json'));
+  assert.ok(s.permissions.deny.includes('Read(//Users/me/.claude/.credentials.json)'));
 });
 
 test('a worker is told plainly that committing is not its job', () => {

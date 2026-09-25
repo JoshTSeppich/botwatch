@@ -12,12 +12,18 @@ import { join } from 'node:path';
 import { AUTH_ENV } from './refguard.js';
 import { scriptShellCommand } from './runtime.js';
 
-// Anthropic only, by default. Not github.com: a worker has no business
-// reaching a remote, and leaving it out closes push at a second layer, below
-// the missing pushurl and the absent credentials. Not the package registries
-// either, unless the run allows installs: a GET to registry.npmjs.org/<text>
-// carries <text> off the machine, measured reachable before this.
-export const BASE_DOMAINS = ['api.anthropic.com', '*.anthropic.com'];
+// Nothing, by default. This list is what the worker's shell can reach — the
+// session's own calls to the API don't go through the sandbox, and a worker
+// runs normally with none of it (measured on 2.1.282). Not Anthropic: with
+// api.anthropic.com open, a worker's Bash ran `claude -p` in the background
+// and reached the API — a second session with no hooks, no budget and no depth
+// limit, stopped only because the token it found had expired. Not github.com:
+// a worker has no business reaching a remote, and leaving it out closes push
+// at a second layer, below the missing pushurl and the absent credentials. Not
+// the package registries either, unless the run allows installs: a GET to
+// registry.npmjs.org/<text> carries <text> off the machine, measured
+// reachable before this.
+export const BASE_DOMAINS = [];
 export const INSTALL_DOMAINS = [
   'registry.npmjs.org',
   '*.npmjs.org',
@@ -43,6 +49,9 @@ export const SECRET_PATHS = [
   '.npmrc',
   '.pypirc',
   '.config/gh',
+  // Claude Code's own login where the Keychain isn't used: an OAuth access
+  // token and a refresh token. Readable by a worker's shell until 0.3.2.
+  '.claude/.credentials.json',
   'Library/Keychains',
   'Library/Cookies',
   'Library/Safari',
@@ -53,6 +62,29 @@ export const SECRET_PATHS = [
   'Library/Application Support/Arc',
 ];
 
+// Tools that reach past the sandbox: other sessions, the network from the
+// CLI's own process, or the user. None has a use in a worker or the
+// orchestrator, and each is a way out that the sandbox never sees. Denied,
+// not left to the permission flow: a deny rule wins over any allow rule in
+// the user's or the repo's settings, and over bypassPermissions. Measured on
+// 2.1.282: a subagent in a worker found this session with ListAgents and
+// messaged it with SendMessage.
+export const DENIED_TOOLS = [
+  'SendMessage', // messages any local Claude session, the user's own included
+  'ListAgents', // finds them
+  'RemoteTrigger', // starts sessions in the cloud
+  'Workflow', // starts fleets of agents
+  'PushNotification', // reaches the user outside BotWatch
+  'CronCreate', // schedules prompts that outlive the turn
+  'CronDelete',
+  'ScheduleWakeup',
+  'WebFetch', // fetched by the CLI itself, so the sandbox allowlist never applies
+  'WebSearch',
+  'DesignSync',
+  'EnterWorktree', // moves the session out of the worktree it was given
+  'ExitWorktree',
+];
+
 export function secretPaths(home = homedir()) {
   return SECRET_PATHS.map((p) => join(home, p));
 }
@@ -60,7 +92,7 @@ export function secretPaths(home = homedir()) {
 export function guardSettings({ protect = [], allowInstalls = false, home = homedir() } = {}) {
   const domains = allowInstalls ? [...BASE_DOMAINS, ...INSTALL_DOMAINS] : BASE_DOMAINS;
   const guard = scriptShellCommand(new URL('./guard.mjs', import.meta.url));
-  const deny = [];
+  const deny = [...DENIED_TOOLS];
   for (const path of protect) {
     // `//` is an absolute path in a permission rule.
     deny.push(`Write(/${path}/**)`, `Edit(/${path}/**)`, `NotebookEdit(/${path}/**)`);
@@ -106,6 +138,6 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
       // The CLI authenticates with these if they are set; its Bash never sees them.
       credentials: { envVars: AUTH_ENV.map((name) => ({ name, mode: 'deny' })) },
     },
-    ...(deny.length ? { permissions: { deny } } : {}),
+    permissions: { deny },
   };
 }
