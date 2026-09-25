@@ -127,16 +127,13 @@ test('stream-json init gives the session id, result gives the outcome', () => {
   assert.equal(readEvent({ type: 'result', is_error: true }).error, true);
 });
 
-test('worker token counts ignore cache reads, as the usage ledger does', () => {
+test('an assistant record gives the tool; tokens are counted by the meter, not per record', () => {
   const event = readEvent({
     type: 'assistant',
-    message: {
-      content: [{ type: 'tool_use', name: 'Bash' }],
-      usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 2, cache_read_input_tokens: 999_999 },
-    },
+    message: { id: 'm1', content: [{ type: 'tool_use', name: 'Bash' }], usage: { input_tokens: 10, output_tokens: 5 } },
   });
-  assert.equal(event.tokens, 17);
   assert.equal(event.tool, 'Bash');
+  assert.equal(event.tokens, undefined);
 });
 
 test('the task is never passed as an argument, or the worker hangs on stdin', () => {
@@ -144,16 +141,6 @@ test('the task is never passed as an argument, or the worker hangs on stdin', ()
   assert.equal(args.includes('--input-format'), true);
   // -p must be a bare flag: a value here is the bug that hung the first worker.
   assert.equal(args[args.indexOf('-p') + 1].startsWith('--'), true);
-});
-
-test('the result record is where the final turn\'s tokens arrive', () => {
-  const event = readEvent({
-    type: 'result',
-    is_error: false,
-    usage: { input_tokens: 10, output_tokens: 35, cache_creation_input_tokens: 5, cache_read_input_tokens: 21_611 },
-  });
-  assert.equal(event.kind, 'finished');
-  assert.equal(event.tokens, 50);
 });
 
 test('plan windows are read from the CLI rather than guessed at', () => {

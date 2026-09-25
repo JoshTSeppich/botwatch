@@ -10,6 +10,7 @@ import { appendLog, logEntries } from './log.js';
 import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
+import { createMeter } from '../tokens.js';
 import { EventEmitter } from 'node:events';
 
 // Turns stream-json lines into the handful of facts a worker row shows.
@@ -21,29 +22,15 @@ export function readEvent(record) {
   if (record.type === 'assistant') {
     const content = record.message?.content ?? [];
     const call = Array.isArray(content) ? content.find((p) => p.type === 'tool_use') : null;
-    const usage = record.message?.usage;
     return {
       kind: 'progress',
       tool: call?.name ?? null,
       input: call?.input ?? null,
       text: Array.isArray(content) ? content.find((p) => p.type === 'text')?.text ?? null : null,
-      tokens: usage
-        ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
-        : 0,
     };
   }
   if (record.type === 'result') {
-    const usage = record.usage;
-    return {
-      kind: 'finished',
-      error: Boolean(record.is_error),
-      result: record.result ?? null,
-      // The result record carries the run's own usage totals, which is where
-      // the last turn's tokens actually show up.
-      tokens: usage
-        ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
-        : 0,
-    };
+    return { kind: 'finished', error: Boolean(record.is_error), result: record.result ?? null };
   }
   // The real plan windows, straight from the CLI. The handoff assumed these
   // were unavailable and fell back to counting tokens against a number the user
@@ -52,7 +39,6 @@ export function readEvent(record) {
     const windows = record.rate_limit_info?.unifiedWindows ?? {};
     return {
       kind: 'limits',
-      tokens: 0,
       fiveHour: windows.five_hour ?? null,
       sevenDay: windows.seven_day ?? null,
     };
@@ -138,6 +124,8 @@ export class Worker extends EventEmitter {
     super();
     Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs, allowInstalls });
     this.state = 'queued';
+    // Counted once per API message, trued up at each result: see tokens.js.
+    this.meter = createMeter();
     this.tokens = 0;
     // What the log panel shows; see log.js.
     this.log = { seq: 0, items: [] };
@@ -192,13 +180,14 @@ export class Worker extends EventEmitter {
       appendLog(this.log, entries);
       this.emit('log', this);
     }
+    const tokens = this.meter.absorb(record);
+    if (tokens) {
+      this.tokens += tokens;
+      this.emit('tokens', this, tokens);
+    }
     const event = readEvent(record);
     if (!event) return;
     if (event.kind === 'started') this.sessionId = event.sessionId;
-    if (event.tokens) {
-      this.tokens += event.tokens;
-      this.emit('tokens', this, event.tokens);
-    }
     if (event.kind === 'progress' && (event.tool || event.text)) {
       this.summary = event.tool ? phrase(event.tool, event.input ?? {}) : plain(event.text);
     }

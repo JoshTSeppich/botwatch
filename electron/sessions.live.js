@@ -3,6 +3,7 @@
 //   ~/.claude/sessions/<pid>.json          which sessions exist: pid, sessionId, cwd, startedAt
 //   hook events, via bw-hook and pilld     what each one is doing, and whether it needs you
 //   ~/.claude/projects/<slug>/<id>.jsonl   model and per-turn token usage
+//     and <slug>/<id>/subagents/*.jsonl    what its subagents spent
 //
 // The transcript still says what a session is doing until its first hook event
 // arrives — a session started before BotWatch, or one with the plugin not
@@ -26,6 +27,7 @@ import { promisify } from 'node:util';
 
 import { firstSentence, phrase } from './orchestrator/phrase.js';
 import { createRegistry, STALL_AFTER_MS } from './registry.js';
+import { createMessageCounter } from './tokens.js';
 import { processStart, sameStart } from './orchestrator/proc.js';
 
 const run = promisify(execFile);
@@ -34,6 +36,10 @@ const CLAUDE = join(homedir(), '.claude');
 const WEEK_MS = 7 * 86_400_000;
 const SLOT_MS = 600_000;
 const BURN_SLOTS = 6;
+// How often the week's transcripts are looked over again. Sessions this app
+// doesn't list — BotWatch's own headless workers, and every subagent — still
+// spend from the same week, and their files appear after the first scan.
+const RESCAN_MS = 60_000;
 const WEEKLY_LIMIT = Number(process.env.PILL_WEEKLY_TOKEN_LIMIT) || 40_000_000;
 
 // path -> tail state. Transcripts run to megabytes, so every poll after the
@@ -43,7 +49,10 @@ const tails = new Map();
 // wants the window handle cached then, not looked up on the click.
 const targets = new Map();
 let transcriptIndex = null;
+// sessionId -> paths of its subagents' transcripts, <slug>/<id>/subagents/*.jsonl.
+let subagentIndex = new Map();
 let weekScan = null;
+let weekScannedAt = 0;
 
 // Fed by pilld from the main process; read here on every poll.
 export const registry = createRegistry();
@@ -56,7 +65,10 @@ export async function read() {
     registry.answered(entry.sessionId, entry.status, entry.statusAt);
     const path = await locate(entry.sessionId);
     const tail = path ? await follow(path) : null;
-    sessions.push(describe(entry, tail));
+    // A session's subagents spend on its behalf, so they count toward it.
+    let subagentTokens = 0;
+    for (const sub of subagentIndex.get(entry.sessionId) ?? []) subagentTokens += (await follow(sub))?.tokens ?? 0;
+    sessions.push(describe(entry, tail, subagentTokens));
   }
   sessions.sort((a, b) => a.startedAt - b.startedAt);
   sessions.forEach((s, i) => {
@@ -66,7 +78,10 @@ export async function read() {
   // The week's totals need every transcript, not just the live ones. That is
   // ~80MB on first pass, so it runs in the background and the usage figures
   // fill in a second later rather than holding up the first paint.
-  if (!weekScan) weekScan = scanWeek();
+  if (!weekScan || Date.now() - weekScannedAt > RESCAN_MS) {
+    weekScannedAt = Date.now();
+    weekScan = scanWeek();
+  }
 
   return { headline: null, sessions, usage: usage(sessions) };
 }
@@ -176,18 +191,26 @@ async function locate(sessionId) {
 async function buildIndex() {
   const root = join(CLAUDE, 'projects');
   const index = new Map();
+  const subagents = new Map();
   for (const project of await readdir(root).catch(() => [])) {
     for (const file of await readdir(join(root, project)).catch(() => [])) {
-      if (file.endsWith('.jsonl')) index.set(file.slice(0, -6), join(root, project, file));
+      if (!file.endsWith('.jsonl')) continue;
+      const id = file.slice(0, -6);
+      index.set(id, join(root, project, file));
+      const dir = join(root, project, id, 'subagents');
+      const subs = (await readdir(dir).catch(() => [])).filter((f) => f.endsWith('.jsonl')).map((f) => join(dir, f));
+      if (subs.length) subagents.set(id, subs);
     }
   }
+  subagentIndex = subagents;
   return index;
 }
 
 async function scanWeek() {
-  if (!transcriptIndex) transcriptIndex = await buildIndex();
+  transcriptIndex = await buildIndex();
   const cutoff = Date.now() - WEEK_MS;
-  for (const path of transcriptIndex.values()) {
+  const paths = [...transcriptIndex.values(), ...[...subagentIndex.values()].flat()];
+  for (const path of paths) {
     const touched = await stat(path)
       .then((s) => s.mtimeMs)
       .catch(() => 0);
@@ -199,6 +222,8 @@ function emptyTail() {
   return {
     offset: 0,
     tokens: 0,
+    // One count per API message: see tokens.js.
+    counter: createMessageCounter(),
     byDay: new Map(),
     bySlot: new Map(),
     // `last` is the newest record of any kind and answers "when did anything
@@ -255,7 +280,8 @@ function absorb(state, line) {
   // newest record is often a tool result, which carries none.
   if (record.message?.model) state.model = record.message.model;
 
-  const tokens = tokensIn(record);
+  if (record.type !== 'assistant') return;
+  const tokens = state.counter.add(record.message?.id ?? record.uuid, record.message?.usage);
   if (tokens === 0) return;
   state.tokens += tokens;
   const at = record.timestamp ? Date.parse(record.timestamp) : Date.now();
@@ -275,15 +301,7 @@ function safeParse(line) {
   }
 }
 
-// Cache reads are re-billed every turn, so summing them would report billions.
-// Input, output and cache writes are the tokens a session actually added.
-function tokensIn(record) {
-  const u = record?.message?.usage;
-  if (!u) return 0;
-  return (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-}
-
-function describe(entry, tail) {
+function describe(entry, tail, subagentTokens = 0) {
   const last = tail?.last ?? null;
   const turn = tail?.lastTurn ?? null;
   const at = last?.timestamp ? Date.parse(last.timestamp) : entry.startedAt;
@@ -301,7 +319,7 @@ function describe(entry, tail) {
     summary: hookSummary(hooked) ?? summaryOf(turn, tail?.lastAssistant),
     etaSeconds: null,
     startedAt: entry.startedAt,
-    tokens: tail?.tokens ?? 0,
+    tokens: (tail?.tokens ?? 0) + subagentTokens,
   };
 }
 

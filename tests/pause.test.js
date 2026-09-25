@@ -29,7 +29,7 @@ test('pause sends the interrupt, and the interrupted turn is not an error or a f
   assert.equal(w.state, 'paused');
   assert.equal(sent[0].type, 'control_request');
   assert.equal(sent[0].request.subtype, 'interrupt');
-  feed({ type: 'result', subtype: 'error_during_execution', is_error: true, usage: { input_tokens: 10, output_tokens: 5 } });
+  feed({ type: 'result', subtype: 'error_during_execution', is_error: true, usage: { input_tokens: 10, output_tokens: 5 }, modelUsage: { haiku: { inputTokens: 10, outputTokens: 5 } } });
   assert.equal(w.state, 'paused', 'not errored');
   assert.equal(w.doneAt, undefined, 'not finished, so nothing is snapshotted');
   assert.equal(w.tokens, 15, "the interrupted turn's tokens are still counted");
