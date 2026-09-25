@@ -142,23 +142,37 @@ export function createOrchestrate({ dock, host, statusEl }) {
     goal.rows = 3;
     form.append(field('Goal', goal));
 
-    const repoInput = el('input', 'setup__repo');
-    repoInput.name = 'repo';
-    repoInput.value = info.repo ?? '';
-    repoInput.placeholder = '/path/to/a/git/repo';
+    // Repos as the spec draws them: chips for the ones you're working in, and
+    // a folder picker. Folder names only — a path would put your home
+    // directory on screen, and on every screen recording of it.
+    let chosenRepo = info.repo ?? null;
     const repoChips = el('div', 'chips');
-    for (const r of info.repos) {
-      repoChips.append(
-        button(r.split('/').pop(), 'chip-btn', async () => {
-          repoInput.value = r;
-          const next = await api.setup(r);
-          testInput.value = next.testCommand ?? '';
-        }),
-      );
+    const pickRepo = async (path) => {
+      chosenRepo = path;
+      for (const c of repoChips.querySelectorAll('.chip-btn[data-repo]')) c.classList.toggle('is-on', c.dataset.repo === path);
+      const next = await api.setup(path);
+      testInput.value = next.testCommand ?? '';
+    };
+    const addRepoChip = (path) => {
+      if (repoChips.querySelector(`.chip-btn[data-repo="${CSS.escape(path)}"]`)) return;
+      const chip = button(path.split('/').pop(), 'chip-btn', () => pickRepo(path));
+      chip.dataset.repo = path;
+      chip.title = path;
+      repoChips.insertBefore(chip, chooser);
+    };
+    const chooser = button('Choose folder\u2026', 'chip-btn chip-btn--quiet', async () => {
+      const path = await api.chooseFolder();
+      if (!path) return;
+      addRepoChip(path);
+      await pickRepo(path);
+    });
+    repoChips.append(chooser);
+    for (const r of info.repos) addRepoChip(r);
+    if (chosenRepo) {
+      addRepoChip(chosenRepo);
+      for (const c of repoChips.querySelectorAll('.chip-btn[data-repo]')) c.classList.toggle('is-on', c.dataset.repo === chosenRepo);
     }
-    const repoWrap = el('div');
-    repoWrap.append(repoChips, repoInput);
-    form.append(field('Repo', repoWrap));
+    form.append(field('Repo', repoChips));
 
     const model = chips('model', info.models, info.models.includes('sonnet') ? 'sonnet' : info.models[0]);
     form.append(field('Model', model.el));
@@ -198,7 +212,7 @@ export function createOrchestrate({ dock, host, statusEl }) {
       error.textContent = '';
       const outcome = await api.start({
         goal: goal.value,
-        repo: repoInput.value,
+        repo: chosenRepo ?? '',
         model: model.get(),
         maxWorkers: workers.get(),
         budgetTokens: budget.get(),

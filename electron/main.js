@@ -3,7 +3,7 @@
 // owns window geometry and nothing else — data comes from sessions.js, raising
 // from raise.js.
 
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, Tray, net, protocol, screen } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Tray, net, protocol, screen } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -187,6 +187,21 @@ app.whenReady().then(async () => {
     recovered,
   }));
   ipcMain.handle('orch:start', (_event, config) => pilot.start(config));
+  // The native folder picker. The overlay can't take focus on its own, so it
+  // is lent focus for as long as the dialog is up.
+  ipcMain.handle('orch:chooseFolder', async () => {
+    if (!win) return null;
+    win.setFocusable(true);
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        title: 'Choose a git repository',
+        properties: ['openDirectory'],
+      });
+      return canceled ? null : filePaths[0] ?? null;
+    } finally {
+      win.setFocusable(false);
+    }
+  });
   ipcMain.handle('orch:review', () => pilot.review());
   ipcMain.handle('orch:merge', (_event, selection) => pilot.merge(selection));
   ipcMain.handle('orch:answer', (_event, text) => pilot.answer(text));

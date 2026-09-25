@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('pillHost', {
   orch: {
     setup: (repo) => ipcRenderer.invoke('orch:setup', repo),
     start: (config) => ipcRenderer.invoke('orch:start', config),
+    chooseFolder: () => ipcRenderer.invoke('orch:chooseFolder'),
     review: () => ipcRenderer.invoke('orch:review'),
     merge: (selection) => ipcRenderer.invoke('orch:merge', selection),
     answer: (text) => ipcRenderer.invoke('orch:answer', text),
