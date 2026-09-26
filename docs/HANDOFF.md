@@ -400,6 +400,13 @@ Decisions made while building it, where the design left room:
   Bash is watched by pilld's diff, which had died with it. Now every call needs a known session
   with a live lease, so with pilld gone nothing more runs (measured: nothing written after the
   kill). It costs one hook process per tool call.
+- The session cap covers every way a session starts running, not just spawns. The cap attack
+  reached 7 against a cap of 3: a spawn checked the cap, then awaited its worktree while others
+  passed the same check; and a done, asking or paused session ran again when sent a message, a
+  nudge, an answer or a resume. Now a spawn checks again right before it starts, and every
+  wake-up goes through `#wake`: now if there is room, otherwise when a session ends.
+- A released claim is free again (it was still denied to the next orchestrator's workers), and
+  `claim_paths` waits until the claim is granted, as it says.
 - `wait_for` returns when pilld pauses a worker for a claim, and `list_workers` names the paths
   (`outsideClaim`). Found in a real run: an orchestrator waited forever on its paused worker.
 
