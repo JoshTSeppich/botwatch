@@ -157,15 +157,19 @@ async function collide() {
   const served = await serve(root);
   const { host } = served;
   const QUESTION = 'Should a loud greeting end with "!!!" or with "!"?';
-  const rule = (what) =>
+  // g1 claims first and then asks; g2 asks first and claims after the answer.
+  // So both questions wait at once (one card), and g2's claim meets g1's
+  // live one (a conflict), whatever the timing.
+  const rule = (what, order) =>
     `${what} in src/greet.js, with a test. One worker. Claim only src/greet.js and test/**. ` +
-    `Hypervisor: pass these orchestrator instructions word for word in the brief. Orchestrator: before claiming anything or starting a worker, call ask_up with exactly this question: ${QUESTION} ` +
+    `Hypervisor: pass these orchestrator instructions word for word in the brief. Orchestrator: ${order} ` +
+    `The question, exactly: ${QUESTION} ` +
     'It is a product decision the user reserved: the hypervisor must not answer it, and must pass it to the user with ask_human. Wait for the answer, then do the work.';
   const started = await host.start({
     id: `itc${Date.now().toString(36)}`,
     goals: [
-      { id: 'g1', priority: 1, repo, goal: rule('Add shout(name), a loud greeting,') },
-      { id: 'g2', priority: 2, repo, goal: rule('Add yell(name), a loud greeting,') },
+      { id: 'g1', priority: 1, repo, goal: rule('Add shout(name), a loud greeting,', 'first call claim_paths, then call ask_up with the question below, before starting any worker.') },
+      { id: 'g2', priority: 2, repo, goal: rule('Add yell(name), a loud greeting,', 'first call ask_up with the question below, and only after the answer call claim_paths, then start the worker.') },
     ],
     budgetTokens: 1_500_000,
     maxSessions: 5,
