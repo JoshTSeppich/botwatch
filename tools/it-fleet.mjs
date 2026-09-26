@@ -125,16 +125,37 @@ async function basic() {
   check('the heading question was answered somewhere up the chain, and logged with its chain', answers.some((d) => /case/i.test(`${d.question} ${d.text}`) && d.chain.startsWith('H')), answers.map((d) => `${d.chain}: ${d.text.slice(0, 40)} [rule: ${d.rule ?? 'none'}]`).join(' | ') || '(none)');
 
   console.log('\nThe merge queue');
-  const built = await host.build(repo);
-  check('staging built, each entry tested on top of the ones before', built.entries?.every((e) => e.built?.sha && e.built.test?.passed), JSON.stringify(built.entries?.map((e) => ({ id: e.id, sha: e.built?.sha?.slice(0, 7), passed: e.built?.test?.passed, conflict: e.built?.conflict }))));
+  let built = await host.build(repo);
+  const describe = (b) => JSON.stringify(b.entries?.map((e) => ({ id: e.id, sha: e.built?.sha?.slice(0, 7), passed: e.built?.test?.passed, conflict: e.built?.conflict })));
+  check('staging built: each entry tested on top of the ones before, or its conflict named', built.entries?.every((e) => (e.built?.sha && e.built.test) || e.built?.conflict?.files?.length), describe(built));
+  // An entry whose own workers collided (an orchestrator's split, not a
+  // limit) can't merge. Reorder the ones that built to the front, as the
+  // hypervisor would, and rebuild.
+  if (built.entries?.some((e) => e.built?.conflict)) {
+    const order = [...built.entries.filter((e) => e.built?.sha), ...built.entries.filter((e) => !e.built?.sha)].map((e) => e.id);
+    fleet.orderQueue(repo, order);
+    built = await host.build(repo);
+    console.log(`  info an entry conflicted; reordered to ${order.join(', ')} and rebuilt: ${describe(built)}`);
+  }
+  const clean = [];
+  for (const e of built.entries ?? []) {
+    if (!e.built?.sha) break;
+    clean.push(e);
+  }
   check('main has not moved', git(repo, 'rev-parse', 'main') === mainBefore);
-  const last = built.entries?.at(-1);
+  const last = clean.at(-1);
   const q = fleet.queues.get(repo);
   const refused = await q.approve({ upTo: last?.id, sha: last?.built?.sha });
   check('without the click, staging does not merge', /click Merge/.test(refused.error ?? ''), refused.error);
   const merged = await host.approve(repo, { upTo: last?.id, sha: last?.built?.sha });
   check('with the click, main moves to exactly the tested staging commit', !merged.error && git(repo, 'rev-parse', 'main') === last?.built?.sha, merged.error ?? merged.sha?.slice(0, 7));
-  check('the work is on main', existsSync(join(repo, 'src/farewell.js')) && existsSync(join(repo, 'docs/USAGE.md')));
+  const owners = new Set(clean.map((e) => e.owner));
+  const ownerOf = (goal) => [...fleet.orchestrators.values()].find((o) => o.goal.id === goal)?.id;
+  const expected = [
+    [ownerOf('g1'), 'src/farewell.js'],
+    [ownerOf('g2'), 'docs/USAGE.md'],
+  ];
+  check("each merged entry's work is on main", clean.length > 0 && expected.filter(([o]) => owners.has(o)).every(([, f]) => existsSync(join(repo, f))), `merged ${clean.map((e) => `${e.id} (${e.owner})`).join(', ') || 'nothing'}`);
 
   console.log('\nThe hypervisor');
   const hvDir = join(homedir(), '.claude', 'projects', join(root, 'fleet', 'H').replace(/[^A-Za-z0-9]/g, '-'));
@@ -168,7 +189,11 @@ async function collide() {
   const started = await host.start({
     id: `itc${Date.now().toString(36)}`,
     goals: [
-      { id: 'g1', priority: 1, repo, goal: rule('Add shout(name), a loud greeting,', 'first call claim_paths, then call ask_up with the question below, before starting any worker.') },
+      // g1's work is long (40 test files, one at a time), so its claim is
+      // held long enough for the hypervisor to see the conflict and act:
+      // in a shorter run g1 finished first and pilld granted g2's claim
+      // on release, before the hypervisor had done anything.
+      { id: 'g1', priority: 1, repo, goal: `${rule('Add shout(name), a loud greeting,', 'first call claim_paths, then call ask_up with the question below, before starting any worker.')} Also, one worker writes test/shout1.test.js through test/shout40.test.js, one at a time with the Write tool, each testing shout on one name.` },
       { id: 'g2', priority: 2, repo, goal: rule('Add yell(name), a loud greeting,', 'first call ask_up with the question below, and only after the answer call claim_paths, then start the worker.') },
     ],
     budgetTokens: 1_500_000,

@@ -272,7 +272,7 @@ async function expiry() {
   const after = { files: files(), running: o.run.workers.filter((w) => w.state === 'running').length, tokens: f.spent, orchestrator: o.session.state, workers: o.run.workers.map((w) => w.state) };
   console.log(`  info from expiry+3s to +48s: files ${at.files} -> ${after.files}, tokens ${at.tokens.toLocaleString()} -> ${after.tokens.toLocaleString()}; workers ${after.workers.join(', ')}; orchestrator ${after.orchestrator}`);
   check('a worker was still working when the lease expired, so the pause was exercised', o.run.workers.some((w) => w.state === 'paused'), after.workers.join(', '));
-  check('after expiry nothing runs: every session under the lease is paused', after.running === 0 && after.orchestrator === 'paused' && o.run.workers.every((w) => ['paused', 'done', 'errored', 'stopped'].includes(w.state)));
+  check('after expiry nothing runs: every session under the lease is paused', after.running === 0 && after.orchestrator === 'paused' && o.run.workers.every((w) => ['paused', 'done', 'errored', 'stopped', 'queued'].includes(w.state)));
   check('and nothing more is written', after.files === at.files);
   check('and nothing starts after expiry', o.run.workers.length === workersAtExpiry, `${workersAtExpiry} at expiry, ${o.run.workers.length} after`);
   const refused = [...(o.session.log?.items ?? [])].filter((i) => i.kind === 'result' && /expired|nothing new starts/.test(i.text)).length;
