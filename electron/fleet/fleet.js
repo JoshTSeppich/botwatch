@@ -141,6 +141,7 @@ export class Fleet extends EventEmitter {
     this.conflicts = new Map(); // c1 -> { claimant, holders, pairs }
     this.queues = new Map(); // repo -> MergeQueue
     this.tokens = new Map(); // token -> role
+    this.deferred = []; // wake-ups waiting for room under the cap
     this.decisions = createDecisionLog(join(dir, 'decisions.jsonl'));
     this.nextO = 1;
     this.nextQ = 1;
@@ -149,6 +150,18 @@ export class Fleet extends EventEmitter {
     this.paused = false;
     this.clock = setInterval(() => this.tick(), 1000);
     this.clock.unref?.();
+  }
+
+  emit(event, ...args) {
+    if (event === 'change' && this.deferred?.length && !this.flushing) {
+      this.flushing = true;
+      try {
+        this.#flushDeferred();
+      } finally {
+        this.flushing = false;
+      }
+    }
+    return super.emit(event, ...args);
   }
 
   // ---- accounting ---------------------------------------------------------
@@ -227,6 +240,30 @@ export class Fleet extends EventEmitter {
     this.hypervisor?.pause();
     for (const id of this.orchestrators.keys()) this.#halt(id, reason);
     this.emit('change');
+  }
+
+  // ---- the session cap, for everything that sets a session running ----------
+
+  // A session that isn't running (done, asking, paused) starts running again
+  // when it is sent a message or resumed. That counts against the cap like
+  // a start, so it goes through here: now if there is room, otherwise when a
+  // session ends. Found by the cap attack: nudges, answers and resumes had
+  // taken the fleet to 7 sessions against a cap of 3.
+  #wake(session, act) {
+    if (!session) return;
+    if (session.state === 'running' || underCap(this).ok) {
+      act();
+      return;
+    }
+    this.deferred.push({ session, act });
+  }
+
+  #flushDeferred() {
+    while (this.deferred.length && underCap(this).ok) {
+      const { session, act } = this.deferred.shift();
+      if (session.state === 'stopped' || this.stopped) continue;
+      act();
+    }
   }
 
   // ---- the gate every start goes through -------------------------------------
@@ -365,9 +402,11 @@ export class Fleet extends EventEmitter {
       this.emit('change');
     });
     this.decisions.record({ by: 'H', level: 'H', chain: chain('H', id), kind: 'spawn', text: `started ${id} on ${goalId} with ${lease.tokens.toLocaleString('en-US')} tokens, ${lease.slots} slots, ${expires} minutes` });
-    entry.session.start();
+    // Checked again after the awaits above, like a worker's start: room may
+    // have gone meanwhile. If so it starts when a session ends.
+    this.#wake(entry.session, () => entry.session.start());
     this.emit('change');
-    return { id, lease: this.leaseView(id) };
+    return { id, lease: this.leaseView(id), ...(entry.session.state === 'running' ? {} : { state: 'queued: the session cap is reached' }) };
   }
 
   // A v3 orchestrator the user started before the fleet, brought under it.
@@ -393,10 +432,10 @@ export class Fleet extends EventEmitter {
     this.tokens.set(token, { role: 'V3', id });
     // It declares its claim like any other orchestrator, with claim_paths,
     // which its tools now include. Until then it can't start workers.
-    session?.message?.(
+    this.#wake(session, () => session?.message?.(
       'You are now under a BotWatch hypervisor. Before you start any more workers, call claim_paths with the repo paths ' +
         'your workers will change (globs like src/ui/**). Workers already running carry on. Questions for the user now go through ask_human as before.',
-    );
+    ));
     this.decisions.record({ by: 'pilld', level: 'pilld', chain: chain('H', id), kind: 'spawn', text: `adopted a v3 orchestrator as ${id}, lease ${lease.tokens.toLocaleString('en-US')} tokens, ${lease.slots} slots; asked to claim its paths` });
     this.emit('change');
     return { id, lease: this.leaseView(id) };
@@ -442,15 +481,17 @@ export class Fleet extends EventEmitter {
     if (s.state === 'asking' && s.question && o.relayed !== s.question) {
       o.relayed = s.question;
       void this.askUp(o.id, { question: s.question }).then((out) => {
-        if (out?.answer != null) s.message(`Answer (from ${out.by === 'human' ? 'the user' : 'the hypervisor'}): ${out.answer}`);
+        if (out?.answer != null) this.#wake(s, () => s.message(`Answer (from ${out.by === 'human' ? 'the user' : 'the hypervisor'}): ${out.answer}`));
       });
       return;
     }
     if (s.state === 'done' && !o.finished && (o.nudges ?? 0) < 2) {
       o.nudges = (o.nudges ?? 0) + 1;
-      s.message(
-        'Your turn ended, but your goal is not queued yet. Nobody reads your closing text. ' +
-          'If you need a decision, call ask_up. Otherwise carry on: claim_paths, spawn_worker, wait_for, and enqueue_merge when the work is done.',
+      this.#wake(s, () =>
+        s.message(
+          'Your turn ended, but your goal is not queued yet. Nobody reads your closing text. ' +
+            'If you need a decision, call ask_up. Otherwise carry on: claim_paths, spawn_worker, wait_for, and enqueue_merge when the work is done.',
+        ),
       );
     }
   }
@@ -479,7 +520,7 @@ export class Fleet extends EventEmitter {
     for (const g of unstarted) waiting.push(`goal ${g.id} has no orchestrator`);
     if (!waiting.length) return;
     this.hNudges = (this.hNudges ?? 0) + 1;
-    h.message(`Your turn ended with work still open: ${waiting.join('; ')}. Nobody reads your closing text; use ask_human for the user. Carry on with list_orchestrators.`);
+    this.#wake(h, () => h.message(`Your turn ended with work still open: ${waiting.join('; ')}. Nobody reads your closing text; use ask_human for the user. Carry on with list_orchestrators.`));
   }
 
   // ---- claims ----------------------------------------------------------------
@@ -676,9 +717,12 @@ export class Fleet extends EventEmitter {
     if (!live.ok) return { error: `can't resume ${id}: ${live.reason}` };
     if (this.budgetExhausted) return { error: 'the global budget is spent' };
     o.haltReason = null;
-    const out = o.run.resumeAll();
-    if (out.error) return out;
-    o.session?.resume();
+    o.run.paused = false;
+    o.run.pauseReason = null;
+    // Each paused session resumes when there is room under the cap.
+    this.#wake(o.session, () => o.session.resume());
+    for (const w of o.run.workers) if (w.state === 'paused' && !w.claimViolations?.length) this.#wake(w, () => w.resume());
+    o.run.drain?.();
     this.decisions.record({ by: 'H', level: 'H', chain: chain('H', id), kind: 'resume', text: `resumed ${id}` });
     this.emit('change');
     return { resumed: id };
@@ -743,7 +787,7 @@ export class Fleet extends EventEmitter {
     card.answered = { text: String(text), at: this.now() };
     if (card.own) {
       this.decisions.record({ by: 'human', level: 'human', chain: 'H', kind: 'human', question: card.own, text });
-      this.hypervisor?.message(`The user answered: ${text}`);
+      this.#wake(this.hypervisor, () => this.hypervisor.message(`The user answered: ${text}`));
       this.emit('change');
     }
     for (const q of card.questions) this.answer(q, text, null, 'human');
@@ -936,6 +980,9 @@ export class Fleet extends EventEmitter {
     if (['message_worker', 'stop_worker'].includes(name) || name === 'spawn_worker') {
       const live = leaseLive(this.leases.get(id), this.now());
       if (!live.ok) return { error: live.reason };
+    }
+    if (name === 'message_worker' && o.run.find(args.id) && o.run.find(args.id).state !== 'running' && !underCap(this).ok) {
+      return { error: `${args.id} isn't running, and waking it would pass the session cap (${this.maxSessions}); try again when a session finishes` };
     }
     if (name === 'message_worker' && o.run.find(args.id)?.state === 'asking') {
       const worker = o.run.find(args.id);

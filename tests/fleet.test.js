@@ -613,3 +613,90 @@ test("a released claim is not denied to the next orchestrator's workers", async 
   assert.equal(f.orchestrators.get('O2').claim.state, 'granted');
   assert.deepEqual(f.orchestrators.get('O2').run.workerOptions('w1', '/wt').denyWrites, []);
 });
+
+// ---- the cap, for everything that sets a session running ------------------------
+
+test('attack: waking sessions past the cap (nudges, answers, resumes, messages) is deferred, not done', async () => {
+  const { f, hv } = await started({ maxSessions: 2 });
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
+  const o = f.orchestrators.get('O1');
+  // H and O1 running: the cap of 2 is full.
+  const w = new FakeSession({ id: 'w1' });
+  w.state = 'done';
+  let woken = 0;
+  w.message = () => {
+    woken += 1;
+    w.state = 'running';
+    return true;
+  };
+  o.run.workers.push(w);
+  assert.match((await f.callOrchestrator('O1', 'message_worker', { id: 'w1', text: 'more' })).error, /session cap/);
+  assert.equal(woken, 0);
+  // A nudge to a finished orchestrator waits too.
+  let nudged = 0;
+  o.session.message = () => {
+    nudged += 1;
+    o.session.state = 'running';
+  };
+  o.session.state = 'done';
+  o.session.emit('change'); // O1 done: now only H runs, so the nudge fits.
+  assert.equal(nudged, 1);
+  // With the cap full again, the hypervisor's own wake-up waits for room.
+  f.hypervisor.state = 'done';
+  const hv2 = new FakeSession({ id: 'x' });
+  hv2.start();
+  o.run.workers.push(hv2); // O1 and a worker running: full.
+  let told = 0;
+  f.hypervisor.message = () => {
+    told += 1;
+    f.hypervisor.state = 'running';
+  };
+  f.hypervisor.emit('change');
+  assert.equal(told, 0, 'deferred');
+  hv2.state = 'done';
+  f.emit('change');
+  assert.equal(told, 1, 'woken when a session ended');
+});
+
+test('attack: resuming an orchestrator resumes its sessions only as the cap allows', async () => {
+  const { f, hv } = await started({ maxSessions: 3 });
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 3, expires: 60 });
+  await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
+  await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' });
+  const o = f.orchestrators.get('O1');
+  const extra = [new FakeSession({ id: 'w8' }), new FakeSession({ id: 'w9' })];
+  for (const e of extra) {
+    e.state = 'paused';
+    o.run.workers.push(e);
+  }
+  await hv('pause', { id: 'O1' });
+  await hv('resume', { id: 'O1' });
+  assert.ok(f.listOrchestrators().sessions.running <= 3, `running ${f.listOrchestrators().sessions.running}`);
+  assert.ok(o.run.workers.some((w) => w.state === 'paused'), 'the rest wait');
+});
+
+test('attack: parallel spawns cannot pass the cap while a worktree is being made', async () => {
+  const { Run } = await import('../electron/orchestrator/run.js');
+  const { Worker } = await import('../electron/orchestrator/worker.js');
+  const { execFileSync } = await import('node:child_process');
+  const root = mkdtempSync(join(tmpdir(), 'bw-race-'));
+  const repo = join(root, 'r');
+  execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+  execFileSync('git', ['-C', repo, '-c', 'user.email=t@e', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'i']);
+  const start = Worker.prototype.start;
+  Worker.prototype.start = function () {
+    this.state = 'running';
+    return this;
+  };
+  try {
+    const run = new Run({ repo, goal: 'g', model: 'haiku', maxWorkers: 5 });
+    run.gate = () => (run.workers.filter((w) => w.state === 'running').length < 1 ? { ok: true } : { ok: false, queue: true, reason: 'cap' });
+    const out = await Promise.all([run.spawn('a'), run.spawn('b'), run.spawn('c')]);
+    assert.equal(run.workers.filter((w) => w.state === 'running').length, 1, JSON.stringify(out));
+    assert.equal(out.filter((o) => o.state === 'queued').length, 2);
+    run.close();
+  } finally {
+    Worker.prototype.start = start;
+  }
+});

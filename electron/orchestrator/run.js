@@ -402,7 +402,16 @@ export class Run extends EventEmitter {
     });
     this.workers.push(worker);
 
-    if (verdict.queue) {
+    // Checked again now, after the await for the worktree: other starts may
+    // have taken the room meanwhile (found by the v4 cap attack). From here
+    // to start() nothing else can run.
+    const now = verdict.queue ? verdict : this.verdict();
+    if (!now.ok && !now.queue) {
+      this.workers.pop();
+      await worktrees.remove(this.repo, path).catch(() => {});
+      return { error: now.reason };
+    }
+    if (now.queue) {
       this.queue.push(worker);
       this.emit('change', this);
       return { id, state: 'queued', branch };
