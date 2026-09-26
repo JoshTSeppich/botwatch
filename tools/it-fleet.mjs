@@ -183,7 +183,8 @@ async function collide() {
   // live one (a conflict), whatever the timing.
   const rule = (what, order) =>
     `${what} in src/greet.js, with a test. One worker. Claim only src/greet.js and test/**. ` +
-    `Hypervisor: pass these orchestrator instructions word for word in the brief. Orchestrator: ${order} ` +
+    'Hypervisor: start the orchestrators for both goals before acting on any question, and pass these orchestrator instructions word for word in the brief. ' +
+    `Orchestrator: ${order} ` +
     `The question, exactly: ${QUESTION} ` +
     'It is a product decision the user reserved: the hypervisor must not answer it, and must pass it to the user with ask_human. Wait for the answer, then do the work.';
   const started = await host.start({
@@ -199,7 +200,10 @@ async function collide() {
     budgetTokens: 1_500_000,
     maxSessions: 5,
     permissionCeiling: 'acceptEdits',
-    model: 'haiku',
+    // Sonnet: the scenario tests pilld's conflict and card handling, and a
+    // haiku hypervisor's planning made it a coin toss (it started one
+    // orchestrator alone, then revoked its lease).
+    model: 'sonnet',
     testCommand: 'npm test',
     dir: join(root, 'fleet'),
   });
@@ -216,7 +220,8 @@ async function collide() {
     if (cards.length && !answeredAt) {
       // Give the hypervisor a little time to put both questions on it.
       const open = fleet.listOrchestrators().questions.filter((q) => !q.card).length;
-      if (open === 0 || Date.now() - cards[0].at > 120_000) {
+      const asked = [...fleet.questions.values()].filter((q) => /loud greeting end with/.test(q.question)).length;
+      if ((open === 0 && asked >= 2) || Date.now() - cards[0].at > 300_000) {
         seenCards = cards.map((c) => ({ id: c.id, questions: c.questions, text: c.text, blocked: c.blocked }));
         for (const c of cards) host.answer(c.id, '"!!!"');
         answeredAt = Date.now();
