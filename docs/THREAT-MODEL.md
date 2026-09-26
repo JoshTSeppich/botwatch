@@ -270,10 +270,10 @@ lease expire on waking.
   number: a step is whatever tool output enters the context at once, and five parallel 60KB reads
   made one step of 112,553. Since the read cap (after 0.3.2, `readcap.js`, in the fail-closed
   guard hook): one Read may bring in 32,000 bytes, and one message may make 4 Reads totalling
-  64,000 bytes. With it the largest step measured is about 11,000 tokens, the same as five
-  parallel `cat`s through Bash (Claude Code limits a Bash result) and as a session's first
-  message; a 20,000 budget with one worker reading in parallel ended 4,285 to 5,485 over, and
-  with two workers and the orchestrator 11,247 to 11,348 over (`tools/it-readcap.mjs`,
+  64,000 bytes. With it the largest step measured is 10,763 to 14,644 tokens across runs, about the
+  same as five parallel `cat`s through Bash (Claude Code limits a Bash result) and as a session's
+  first message; a 20,000 budget with one worker reading in parallel ended 4,285 to 13,576 over
+  across nine runs, and with two workers and the orchestrator 1,112 to 11,432 over (`tools/it-readcap.mjs`,
   `tools/it-pause.mjs`). The hook tells which calls share a message by the number of assistant
   messages already in the session's transcript, which is constant across one message's calls
   (measured; the payload doesn't say, and the calls run one after another). After a pause the count runs 3–5% under the transcripts (an interrupted
