@@ -214,6 +214,8 @@ async function collide() {
   // first see what the queue looked like.
   let seenCards = [];
   let answeredAt = null;
+  const merged = [];
+  const staged = [];
   const deadline = Date.now() + 25 * 60_000;
   while (Date.now() < deadline) {
     const cards = host.questions();
@@ -227,8 +229,25 @@ async function collide() {
         answeredAt = Date.now();
       }
     }
-    const view = host.view();
-    if (view.orchestrators.length === 2 && view.orchestrators.every((o) => o.state === 'queued')) break;
+    // The user merges each entry once it has built and its tests pass: a
+    // claim is held until then, so this is what lets a sequenced
+    // orchestrator start, from the updated main.
+    const q = fleet.queues.get(repo);
+    // Built again only when the queue changed (q.built is reset then).
+    if (q?.pending().length && !q.built) {
+      const built = await host.build(repo);
+      for (const e of built.entries) {
+        if (!e.built?.sha || e.built.test?.passed !== true) {
+          if (e.built?.conflict || e.built?.test?.passed === false) staged.push({ id: e.id, owner: e.owner, conflict: e.built.conflict, passed: e.built.test?.passed ?? null });
+          break;
+        }
+        const out = await host.approve(repo, { upTo: e.id, sha: e.built.sha });
+        merged.push({ id: e.id, owner: e.owner, sha: e.built.sha, error: out.error ?? null });
+        break;
+      }
+    }
+    if (merged.filter((m) => !m.error).length === 2) break;
+    if (staged.length) break;
     await sleep(2000);
   }
   const view = host.view();
@@ -241,9 +260,24 @@ async function collide() {
   check('one answer reached both', sameQ.every((q) => q.answered?.by === 'human'), sameQ.map((q) => `${q.from}: ${q.answered?.text}`).join(', '));
   const locks = decisions.filter((d) => d.kind === 'lock');
   check('the path conflict was raised and the hypervisor resolved it', locks.length >= 1, locks.map((d) => d.text).join(' | ') || `conflicts open: ${JSON.stringify(view.conflicts)}`);
-  check('both orchestrators finished and queued', view.orchestrators.every((o) => o.state === 'queued'), view.orchestrators.map((o) => `${o.id} ${o.state}`).join(', '));
-  const built = await host.build(repo);
-  console.log(`  info staging: ${JSON.stringify(built.entries?.map((e) => ({ id: e.id, owner: e.owner, sha: e.built?.sha?.slice(0, 7) ?? null, conflict: e.built?.conflict ?? null, passed: e.built?.test?.passed ?? null })))}`);
+  const byGoal = (g) => [...fleet.orchestrators.values()].find((o) => o.goal.id === g);
+  const [o1, o2] = [byGoal('g1'), byGoal('g2')];
+  console.log(`  info merges: ${JSON.stringify(merged.map((m) => ({ ...m, sha: m.sha.slice(0, 7) })))}; entries that could not merge: ${JSON.stringify(staged)}`);
+  const first = merged.find((m) => m.owner === o1?.id);
+  const second = merged.find((m) => m.owner === o2?.id);
+  check("O1's entry merged first, on the user's click", Boolean(first && !first.error && merged[0] === first), JSON.stringify(first));
+  const o2Worker = o2?.run.workers.find((w) => w.snapshot?.sha);
+  const forkedFromUpdated = first && o2Worker && (() => {
+    try {
+      git(repo, 'merge-base', '--is-ancestor', first.sha, o2Worker.snapshot.sha);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  check("O2's worker forked from main after O1's entry landed", Boolean(forkedFromUpdated), o2Worker ? `${o2Worker.branch} @ ${o2Worker.snapshot.sha.slice(0, 7)}` : 'no O2 worker');
+  check("O2's entry merges cleanly: no conflict in staging", Boolean(second && !second.error) && !staged.some((x) => x.conflict), JSON.stringify(second ?? staged));
+  check('both loud greetings are on main', /shout/.test(readFileSync(join(repo, 'src/greet.js'), 'utf8')) && /yell/.test(readFileSync(join(repo, 'src/greet.js'), 'utf8')));
   console.log(`  info decisions: ${decisions.map((d) => `${d.kind} ${d.chain}`).join('; ')}`);
   await served.close();
 }
