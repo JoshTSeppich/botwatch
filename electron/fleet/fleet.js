@@ -321,6 +321,7 @@ export class Fleet extends EventEmitter {
       permissionMode: clampPermission('default', this.permissionCeiling),
       protect: this.goals.map((g) => g.repo),
       unreadable: this.#unreadable(),
+      enforce: this.enforcePath ? { socket: this.enforcePath, session: 'H' } : null,
       brief: HYPERVISOR_BRIEF,
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
@@ -386,6 +387,7 @@ export class Fleet extends EventEmitter {
       model: this.model,
       permissionMode: clampPermission('default', this.permissionCeiling),
       protect: [goal.repo],
+      enforce: this.enforcePath ? { socket: this.enforcePath, session: id } : null,
       brief: FLEET_ORCHESTRATOR_BRIEF(lease.slots),
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
@@ -615,14 +617,47 @@ export class Fleet extends EventEmitter {
     this.#reconsider();
   }
 
-  // May this session use a tool at all? A session pilld doesn't know, or
-  // whose lease isn't live, may not. (With pilld gone, the hook refuses.)
+  // May this session use a tool at all? For the enforcement hook, on every
+  // tool call of every session the fleet starts: the hypervisor ('H'), an
+  // orchestrator ('O1') or a worker ('O1/w2'). Refused for a session pilld
+  // doesn't know, under a lease that isn't live, or when what is left is
+  // under the session's largest step so far (the reserve): the tool call
+  // would bring on another step, and it wouldn't fit. A session stopped at
+  // the reserve is paused with its lease, so nothing nudges it on. (With
+  // pilld gone, the hook itself refuses.)
   mayUse(session) {
     const [oid, wid] = String(session ?? '').split('/');
+    if (oid === 'H') {
+      if (!this.hypervisor) return { ok: false, reason: 'unknown session' };
+      return this.#reserve(null, this.hypervisor);
+    }
     const o = this.orchestrators.get(oid);
-    if (!o?.run.find?.(wid)) return { ok: false, reason: 'unknown session' };
+    const s = wid ? o?.run.find?.(wid) : o?.session;
+    if (!s) return { ok: false, reason: 'unknown session' };
     const live = leaseLive(this.leases.get(oid), this.now());
-    return live.ok ? { ok: true } : { ok: false, reason: `nothing more under this lease: ${live.reason}` };
+    if (!live.ok) return { ok: false, reason: `nothing more under this lease: ${live.reason}` };
+    return this.#reserve(oid, s);
+  }
+
+  #reserve(oid, session) {
+    const step = session.largestStep ?? 0;
+    const globalLeft = this.budgetTokens - this.spent;
+    if (step && globalLeft < step) {
+      if (!this.paused) this.pauseAll('global budget reserve');
+      return { ok: false, reason: `the global budget has ${Math.max(0, globalLeft).toLocaleString('en-US')} tokens left, under this session's largest step (${step.toLocaleString('en-US')})` };
+    }
+    if (!oid) return { ok: true };
+    const lease = this.leases.get(oid);
+    const left = lease.tokens - lease.spent;
+    if (step && left < step) {
+      if (!lease.reserveHit) {
+        lease.reserveHit = { at: this.now(), left, step };
+        this.decisions.record({ by: 'pilld', level: 'pilld', chain: chain('H', oid), kind: 'lease', text: `${oid}'s lease has ${left.toLocaleString('en-US')} left, under a step of ${step.toLocaleString('en-US')}: no more tool calls, and it is paused` });
+        this.#halt(oid, 'lease reserve reached');
+      }
+      return { ok: false, reason: `the lease has ${Math.max(0, left).toLocaleString('en-US')} tokens left, under this session's largest step (${step.toLocaleString('en-US')})` };
+    }
+    return { ok: true };
   }
 
   // May this session write this path? For the enforcement hook, answered
@@ -677,7 +712,7 @@ export class Fleet extends EventEmitter {
     const next = { tokens: Number(tokens), slots: Number(slots), expiresAt: this.now() + minutes(expires) };
     const ok = grantable(this, id, next, this.now());
     if (!ok.ok) return { error: ok.reason };
-    Object.assign(lease, next, { revoked: false, expired: false });
+    Object.assign(lease, next, { revoked: false, expired: false, reserveHit: null });
     const o = this.orchestrators.get(id);
     o.run.ledger.limitTokens = lease.tokens;
     o.run.limits.maxWorkers = lease.slots;

@@ -38,6 +38,7 @@ export function leaseLive(lease, now = Date.now()) {
   if (lease.revoked) return { ok: false, reason: 'the lease was revoked' };
   if (now >= lease.expiresAt) return { ok: false, reason: 'the lease has expired' };
   if (lease.spent >= lease.tokens) return { ok: false, reason: 'the lease is spent' };
+  if (lease.reserveHit) return { ok: false, reason: "the lease's reserve is reached: what is left is under one step" };
   return { ok: true };
 }
 

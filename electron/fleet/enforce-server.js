@@ -22,7 +22,8 @@ export async function serveEnforcement(fleetOf, path) {
       try {
         const q = JSON.parse(pending.slice(0, cut));
         const fleet = fleetOf();
-        answer = !fleet ? { ok: false, reason: 'no fleet is running' } : q.path ? fleet.mayWrite(q.session, q.path) : fleet.mayUse(q.session);
+        const use = fleet ? fleet.mayUse(q.session) : { ok: false, reason: 'no fleet is running' };
+        answer = use.ok && q.path ? fleet.mayWrite(q.session, q.path) : use;
       } catch (err) {
         answer = { ok: false, reason: `could not decide: ${String(err?.message ?? err)}` };
       }

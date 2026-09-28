@@ -175,6 +175,11 @@ export class Worker extends EventEmitter {
     return this;
   }
 
+  // The largest step this session has taken: the budget reserve (v4).
+  get largestStep() {
+    return this.meter.largestStep;
+  }
+
   // For tests: feed one stream record as if the CLI had written it.
   _feed(record) {
     this.#absorb(JSON.stringify(record));

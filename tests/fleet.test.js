@@ -733,3 +733,42 @@ test('rejecting an entry releases its claim too', async () => {
   assert.equal(f.orchestrators.get('O2').claim.state, 'granted');
   assert.match(f.decisions.list({ kind: 'queue' }).at(-1).text, /rejected m1; reason: wrong approach/);
 });
+
+// ---- the budget reserve ----------------------------------------------------------
+
+test('attack: a tool call is refused when the lease has less left than the session\'s largest step, and the lease stops', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 20_000, slots: 2, expires: 60 });
+  await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
+  await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' });
+  const w = f.orchestrators.get('O1').run.workers[0];
+  w.largestStep = 6_000;
+  f.leases.get('O1').spent = 13_000;
+  assert.equal(f.mayUse('O1/w1').ok, true, '7,000 left fits a 6,000 step');
+  f.leases.get('O1').spent = 14_500;
+  const refused = f.mayUse('O1/w1');
+  assert.match(refused.reason, /5,500 tokens left, under this session's largest step \(6,000\)/);
+  assert.equal(f.orchestrators.get('O1').session.state, 'paused', 'paused with its lease, so nothing nudges it on');
+  assert.match(f.mayUse('O1').reason, /reserve/, 'the orchestrator is held too');
+  assert.match((await f.callOrchestrator('O1', 'spawn_worker', { task: 'b' })).error, /reserve/);
+  assert.match(f.decisions.list({ kind: 'lease' }).at(-1).text, /5,500 left, under a step of 6,000/);
+  // A new grant lifts it.
+  await hv('grant_lease', { id: 'O1', tokens: 40_000, slots: 2, expires: 60 });
+  assert.equal(f.mayUse('O1/w1').ok, true);
+});
+
+test('attack: the global budget has a reserve too, for every session including the hypervisor', async () => {
+  const { f } = await started();
+  f.hypervisor.largestStep = 8_000;
+  f.hypervisorSpent = 93_000;
+  const out = f.mayUse('H');
+  assert.match(out.reason, /global budget has 7,000 tokens left/);
+  assert.equal(f.paused, true);
+});
+
+test('a session with no step yet has no reserve to keep', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 20_000, slots: 2, expires: 60 });
+  f.leases.get('O1').spent = 19_999;
+  assert.equal(f.mayUse('O1').ok, true);
+});
