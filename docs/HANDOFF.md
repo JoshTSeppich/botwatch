@@ -393,8 +393,8 @@ Decisions made while building it, where the design left room:
   until it does, it can't start workers (the user's ruling on review).
 - Leases stop on system sleep and resume on wake, extended by the time asleep: the host follows
   `powerMonitor`'s `suspend`/`resume` (pass it as `power` when wiring `main.js`), and the clock
-  stops on suspend so no tick on waking can expire a lease first. Unit-tested with emitted events;
-  not measured with a real sleep.
+  stops on suspend so no tick on waking can expire a lease first. `tools/it-sleep.mjs` runs it in
+  Electron with `pmset sleepnow`; keyboard or trackpad input at that moment cancels the sleep.
 - The enforcement hook runs on **every** tool call of a fleet session, not only file writes: a real
   SIGKILL of pilld showed orphaned workers writing on through Bash (200 files in 20s), because
   Bash is watched by pilld's diff, which had died with it. Now every call needs a known session
@@ -407,6 +407,14 @@ Decisions made while building it, where the design left room:
   wake-up goes through `#wake`: now if there is room, otherwise when a session ends.
 - A released claim is free again (it was still denied to the next orchestrator's workers), and
   `claim_paths` waits until the claim is granted, as it says.
+- A claim is held until its entry is merged or rejected (the user's ruling on the second review);
+  a sequenced orchestrator starts after that and forks from the updated main. Approval refuses an
+  entry whose staging tests failed unless the user overrides it with a reason (queue log and
+  decision log). Rejection needs a reason too. The host has `approve(repo, { upTo, sha, override })`
+  and `reject(repo, id, reason)` for v4-pill's buttons.
+- The budget reserve: the enforcement hook refuses a tool call when what is left is under the
+  session's largest step, and now runs on the hypervisor and orchestrators too. A session with no
+  step yet has no reserve; a first step can be 10,000–21,000 tokens (measured).
 - `wait_for` returns when pilld pauses a worker for a claim, and `list_workers` names the paths
   (`outsideClaim`). Found in a real run: an orchestrator waited forever on its paused worker.
 

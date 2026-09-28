@@ -230,13 +230,14 @@ or **detected** (it happens, is noticed, and the session is paused):
 | Limit | How | Prevented or detected | Evidence |
 | --- | --- | --- | --- |
 | Leases never exceed the global budget | `grantable()` refuses any grant or spawn that would push the leases plus the hypervisor's spending over it | **Prevented** (the grant) | `fleet.test.js` attacks; `it-fleet-attacks budget` |
-| A lease's tokens, and the global budget | counted per API message; a spent lease pauses its orchestrator and workers, a spent budget pauses everything | **Detected, then paused**: one step per running session over | the overrun figures in the design doc's rulings |
+| A lease's tokens, and the global budget | counted per API message; a spent lease pauses its orchestrator and workers, a spent budget pauses everything. The reserve: the enforcement hook refuses any tool call when what is left (of the lease, or of the global budget) is under the session's largest step so far, and pauses the lease | **Detected**, narrowed by the reserve: with it, three real runs under a 20,000 lease ended 1,339 over, 9,530 and 9,218 under. A session's **first** step has no reserve (it has taken none), and one was 21,339 on its own | `it-fleet-attacks overshoot`; `fleet.test.js` |
 | The session cap, across every level | one gate before anything starts: hypervisor, orchestrators and workers together, checked again right before the start; and every wake-up of a session that had stopped running (a message, a nudge, an answer, a resume) goes through the cap too, deferred until there is room | **Prevented** (a start or wake-up waits instead) | `fleet.test.js`; `it-fleet-attacks cap`. The first version was breached (7 against a cap of 3) by a race around worktree creation and by wake-ups; both fixed |
 | Workers only after a claim | the gate refuses `spawn_worker` until the orchestrator's claim is granted | **Prevented** | `fleet.test.js` |
 | Another orchestrator's claim | Write/Edit/NotebookEdit deny rules for its globs, in the worker's settings at spawn; they bind the Bash sandbox too | **Prevented**, for claims granted before the worker started | `it-fleet-attacks claim` |
 | A worker's own claim, and claims made after it started | the enforcement hook (`enforce.mjs`) asks pilld on every Write/Edit, live | **Prevented** for Write/Edit | `fleet.test.js`; `it-fleet-attacks claim` |
 | The same, through Bash | a diff of the worktree after every tool call; a change outside the claim pauses the worker and is logged | **Detected, then paused**. The file exists until you review it, and a branch with it can't be queued | `it-fleet-attacks claim`: a real worker wrote `NOTES.md` by Bash, was caught and paused |
-| Merge into your branches, and push | no tool at any level merges or pushes; staging (`botwatch/staging-<fleet>`) is BotWatch's and is merged into your branch only on your click, at the exact commit built and tested, if the base hasn't moved | **Prevented** | `fleet-rules.test.js`; `it-fleet`; `it-fleet-attacks merge` |
+| Merge into your branches, and push | no tool at any level merges or pushes; staging (`botwatch/staging-<fleet>`) is BotWatch's and is merged into your branch only on your click, at the exact commit built and tested (on current main with the entries before it), if the base hasn't moved. An entry whose tests failed is refused unless you override it with a reason, which is logged | **Prevented** | `fleet-rules.test.js`; `it-fleet`; `it-fleet-attacks merge` |
+| Staging conflicts | a claim is held until its entry is merged or rejected; a sequenced orchestrator starts after that and its workers fork from the updated main | **Prevented** for claimed paths: every worker branches from main | `it-fleet collide`: the second entry merged cleanly |
 | Permission above the ceiling | every session is started with `clampPermission` to the ceiling | **Prevented** | `fleet.test.js`; `it-fleet-attacks permission` |
 | An expired lease, including after the hypervisor dies | leases expire on pilld's clock (stopped while the machine sleeps); expiry pauses the orchestrator and its workers; the gate, the MCP tools and the enforcement hook (every tool call) refuse under it. With the hypervisor gone, running orchestrators carry on within their leases; no new orchestrator or lease | **Prevented** from starting anything or using a tool; the model turn in flight when it expires is spent (**detected**) | `fleet.test.js`; `it-fleet-attacks expiry` |
 | pilld killed mid-fleet | the enforcement hook refuses every tool call when pilld is unreachable; sessions exit when their turn ends (their stdin is gone); the next launch's recovery stops what is left, from the records of the hypervisor and each orchestrator | **Prevented** from running tools after the kill; the turn in flight is spent (**detected**) | `it-fleet-recovery`: nothing written in the 20s after a SIGKILL; every session ended; the user's hook, branches, uncommitted edits, worktree and own claude session untouched |
@@ -255,8 +256,12 @@ token sees only its role's tools (an orchestrator can't call `grant_lease`). The
 only answers questions; it changes nothing. Both are 0600 in BotWatch's directory.
 
 **Machine sleep.** Leases stop while the machine sleeps (Electron's `powerMonitor` suspend and
-resume) and are extended by the time asleep on waking; the sessions were asleep too. Unit-tested
-with emitted events, not with a real sleep. Before this, a run that slept through an expiry saw the
+resume) and are extended by the time asleep on waking; the sessions were asleep too. Tested with
+emitted events and with `pmset sleepnow` in Electron (`tools/it-sleep.mjs`). With real
+`powerMonitor` events the lease was extended by exactly the time recorded asleep. **Not yet shown:**
+a sleep long enough to outlast a lease. Of three attempts, two were cancelled by keyboard input as
+they began (asleep 1s), and the one real sleep (about 6s, woken by the keyboard) came after the
+test's own lease had expired, a mistake in that version of the test, since fixed. Before this, a run that slept through an expiry saw the
 lease expire on waking.
 
 ## Also in scope
