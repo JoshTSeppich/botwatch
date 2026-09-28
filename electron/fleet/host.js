@@ -59,15 +59,21 @@ export function createFleetHost({ controlPath = CONTROL_PATH, enforcePath = ENFO
   }
 
   // The user's click. Nothing else sets the approval, and it lasts one call.
-  async function approve(repo, { upTo, sha }) {
+  // `override` ({ reason }) is its own, separate choice: merging entries
+  // whose tests failed.
+  async function approve(repo, { upTo, sha, override = null }) {
     const q = fleet?.queues.get(repo);
     if (!q) return { error: 'nothing is queued for that repo' };
     q.userApprovedMerge = true;
     try {
-      return await q.approve({ upTo, sha });
+      return await fleet.approveQueue(repo, { upTo, sha, override });
     } finally {
       q.userApprovedMerge = false;
     }
+  }
+
+  function reject(repo, id, reason) {
+    return fleet ? fleet.rejectEntry(repo, id, reason) : { error: 'no fleet' };
   }
 
   async function build(repo) {
@@ -96,6 +102,7 @@ export function createFleetHost({ controlPath = CONTROL_PATH, enforcePath = ENFO
     start,
     current,
     approve,
+    reject,
     build,
     answer: (card, text) => fleet?.answerHuman(card, text) ?? { error: 'no fleet' },
     questions: () => fleet?.humanQueue() ?? [],

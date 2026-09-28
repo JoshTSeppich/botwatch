@@ -77,7 +77,7 @@ export const HYPERVISOR_BRIEF = [
   'The leases together can never exceed the global budget; pilld refuses any that would. Split it by priority.',
   'Then call list_orchestrators with wait_seconds (60 is fine) in a loop and act on what it shows:',
   '- a lease request: grant_lease, take tokens from a lower-priority goal with grant_lease on it, or tell it to wrap up with answer;',
-  '- a lock conflict: resolve_lock (run them in sequence, narrow one claim, or give the shared change to one);',
+  '- a lock conflict: resolve_lock (run them in sequence, narrow one claim, or give the shared change to one). A claim is held until its entry is merged or rejected by the user, so a sequenced orchestrator starts after that;',
   '- a question: answer it if it is cross-goal ordering, a budget trade-off, or already answered for another orchestrator, and say which rule you used;',
   '  pass product decisions, anything destructive, and anything the user reserved to ask_human, with your suggestion and why you could not decide;',
   '  put duplicates in one ask_human call;',
@@ -99,7 +99,7 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots) =>
     'If pilld paused a worker for changing files outside your claim (outsideClaim in its entry), it stays paused: stop_worker it and start a new one with a clearer task, or ask_up.',
     'Pass up with ask_up: deleting shared files, schema changes, and anything touching another claim, with your suggestion. Send the answer on to the worker.',
     'Call report with a short summary after each milestone. If your lease runs low, call request_lease with a reason.',
-    'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker.',
+    'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker. Your claim stays held until the user merges or rejects your entry.',
     'You cannot edit files, run commands or merge.',
     '',
     'Your brief from the hypervisor:',
@@ -821,10 +821,38 @@ export class Fleet extends EventEmitter {
     }
     const out = this.queueFor(o.goal.repo).enqueue(id, branches);
     if (!out.error) {
+      // The claim stays held until the entry is merged or rejected: anything
+      // sequenced behind it starts only after it lands, and forks from the
+      // updated base. So every worker branches from the base, and nothing
+      // in staging can conflict with what was queued before it.
       o.finished = true;
-      this.release(id);
       this.decisions.record({ by: id, level: 'O', chain: chain('H', id), kind: 'queue', text: `queued ${branches.map((b) => b.branch).join(', ')}` });
     }
+    this.emit('change');
+    return out;
+  }
+
+  // The user's click on the queue. Only the host calls this, with the
+  // approval set for the one call. Merged entries release their claims.
+  async approveQueue(repo, { upTo, sha, override = null }) {
+    const q = this.queues.get(repo);
+    if (!q) return { error: 'nothing is queued for that repo' };
+    const out = await q.approve({ upTo, sha, override });
+    if (out.error) return out;
+    for (const owner of new Set(out.owners)) this.release(owner);
+    const logged = q.log.at(-1);
+    this.decisions.record({ by: 'human', level: 'human', chain: 'H', kind: 'queue', text: `${logged.kind === 'override' ? `merged ${out.merged.join(', ')} despite failing tests (${logged.failing.join(', ')}); reason: ${logged.reason}` : `merged ${out.merged.join(', ')}`} at ${out.sha.slice(0, 7)}` });
+    this.emit('change');
+    return out;
+  }
+
+  rejectEntry(repo, id, reason) {
+    const q = this.queues.get(repo);
+    if (!q) return { error: 'nothing is queued for that repo' };
+    const out = q.reject(id, reason);
+    if (out.error) return out;
+    this.release(out.owner);
+    this.decisions.record({ by: 'human', level: 'human', chain: chain('H', out.owner), kind: 'queue', text: `rejected ${id}; reason: ${reason}` });
     this.emit('change');
     return out;
   }

@@ -25,6 +25,9 @@ export class MergeQueue {
     this.entries = [];
     this.userApprovedMerge = false;
     this.built = null; // { baseSha, at }
+    // The user's decisions on the queue: approvals, overrides with their
+    // reasons, rejections. Nothing else writes here.
+    this.log = [];
   }
 
   // An orchestrator's finished work: each worker branch at its snapshot.
@@ -38,7 +41,18 @@ export class MergeQueue {
   }
 
   pending() {
-    return this.entries.filter((e) => !e.merged);
+    return this.entries.filter((e) => !e.merged && !e.rejected);
+  }
+
+  // The user's rejection: the entry leaves the queue and is never merged.
+  reject(id, reason) {
+    const entry = this.pending().find((e) => e.id === id);
+    if (!entry) return { error: `${id} is not in the queue` };
+    if (!String(reason ?? '').trim()) return { error: 'a rejection needs a reason' };
+    entry.rejected = { reason: String(reason), at: Date.now() };
+    this.built = null;
+    this.log.push({ at: Date.now(), kind: 'reject', ids: [id], owner: entry.owner, reason: String(reason) });
+    return { rejected: id, owner: entry.owner };
   }
 
   // The hypervisor's order. Every pending entry, each once.
@@ -97,6 +111,7 @@ export class MergeQueue {
       base: this.base,
       built: this.built,
       entries: this.pending().map((e) => ({ id: e.id, owner: e.owner, branches: e.branches, built: e.built })),
+      log: this.log,
       merged: this.entries.filter((e) => e.merged).map((e) => ({ id: e.id, owner: e.owner, sha: e.mergedSha })),
     };
   }
@@ -104,7 +119,12 @@ export class MergeQueue {
   // The user's click: merge staging into their branch, up to and including
   // one entry (or all of them). Only what was built and tested, only if the
   // base hasn't moved since, and only with the click's approval set.
-  async approve({ upTo, sha }) {
+  //
+  // Each entry's tests ran on staging: the base's current tip with every
+  // entry before it merged in, then this one. Not the branch alone. An entry
+  // whose tests failed (or timed out) is refused unless the user overrides
+  // it, separately and with a reason, which goes in the log.
+  async approve({ upTo, sha, override = null }) {
     if (!this.userApprovedMerge) return { error: 'merge needs the user to click Merge' };
     if (!this.built) return { error: 'the queue changed since staging was built; build and review it again' };
     const pending = this.pending();
@@ -113,6 +133,11 @@ export class MergeQueue {
     const upto = pending.slice(0, index + 1);
     const bad = upto.find((e) => !e.built?.sha);
     if (bad) return { error: `${bad.id} did not build (${bad.built?.conflict ? `conflict in ${bad.built.conflict.files.join(', ') || bad.built.conflict.branch}` : 'not built'}); reorder or drop it first` };
+    const failing = upto.filter((e) => e.built.test && e.built.test.passed === false);
+    const overrideReason = String(override?.reason ?? '').trim();
+    if (failing.length && !overrideReason) {
+      return { error: `tests failed on staging for ${failing.map((e) => e.id).join(', ')}; merging it needs an override with a reason`, failing: failing.map((e) => e.id) };
+    }
     const target = upto.at(-1).built.sha;
     if (sha !== target) return { error: 'staging changed since you reviewed it; review it again' };
     const head = await git(this.repo, 'rev-parse', `refs/heads/${this.base}`);
@@ -131,7 +156,8 @@ export class MergeQueue {
       e.mergedSha = e.built.sha;
     }
     this.built = { baseSha: target, at: Date.now() };
-    return { merged: upto.map((e) => e.id), sha: target };
+    this.log.push({ at: Date.now(), kind: failing.length ? 'override' : 'approve', ids: upto.map((e) => e.id), sha: target, ...(failing.length ? { failing: failing.map((e) => e.id), reason: overrideReason } : {}) });
+    return { merged: upto.map((e) => e.id), owners: upto.map((e) => e.owner), sha: target, ...(failing.length ? { overridden: failing.map((e) => e.id) } : {}) };
   }
 
   async close() {

@@ -700,3 +700,36 @@ test('attack: parallel spawns cannot pass the cap while a worktree is being made
     Worker.prototype.start = start;
   }
 });
+
+// ---- claims held until the entry lands ------------------------------------------
+
+test('a claim is held through queueing, and released when its entry is merged or rejected', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  f.claimPaths('O1', ['src/**']);
+  f.claimPaths('O2', ['src/greet.js']);
+  await hv('resolve_lock', { conflict: 'c1', decision: 'sequence' });
+  // O1 queues its work: its claim is still held.
+  const entryOf = (owner) => ({ id: `m-${owner}`, owner });
+  const queue = { log: [], userApprovedMerge: false, approve: async () => ({ merged: ['m1'], owners: ['O1'], sha: 'abc1234' }), reject: () => ({ rejected: 'm1', owner: 'O1' }), pending: () => [entryOf('O1')], view: () => ({}) };
+  f.queues.set('/r', queue);
+  f.orchestrators.get('O1').finished = true;
+  assert.equal(f.orchestrators.get('O2').claim.state, 'waiting', 'queued is not landed');
+  queue.log.push({ kind: 'approve' });
+  await f.approveQueue('/r', { upTo: 'm1', sha: 'abc1234' });
+  assert.equal(f.orchestrators.get('O2').claim.state, 'granted', 'merged: O2 may start, from the updated base');
+  assert.match(f.decisions.list({ kind: 'queue' }).at(-1).text, /merged m1/);
+});
+
+test('rejecting an entry releases its claim too', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  f.claimPaths('O1', ['src/**']);
+  f.claimPaths('O2', ['src/**']);
+  f.queues.set('/r', { reject: () => ({ rejected: 'm1', owner: 'O1' }) });
+  assert.equal(f.rejectEntry('/r', 'm1', 'wrong approach').rejected, 'm1');
+  assert.equal(f.orchestrators.get('O2').claim.state, 'granted');
+  assert.match(f.decisions.list({ kind: 'queue' }).at(-1).text, /rejected m1; reason: wrong approach/);
+});

@@ -156,3 +156,50 @@ test('staging goes stale when the base moves, and must be rebuilt', async () => 
   assert.match((await q.approve({ upTo: 'm1', sha: view.entries[0].built.sha })).error, /moved since staging was built/);
 });
 
+
+test('an entry whose tests failed is refused; the override needs a reason and is logged', async () => {
+  const { repo, git, branch } = repoWithBranches();
+  const one = branch('bw/one', 'one.txt', '1\n');
+  const q = new MergeQueue({ repo, id: 't5', base: 'main', testCommand: 'x', tests: async () => ({ passed: false, exitCode: 1 }) });
+  q.enqueue('O1', [one]);
+  const view = await q.build();
+  q.userApprovedMerge = true;
+  const sha = view.entries[0].built.sha;
+  const refused = await q.approve({ upTo: 'm1', sha });
+  assert.match(refused.error, /tests failed on staging for m1/);
+  assert.match((await q.approve({ upTo: 'm1', sha, override: { reason: '  ' } })).error, /override with a reason/);
+  assert.notEqual(git('rev-parse', 'main'), sha, 'nothing merged yet');
+  const out = await q.approve({ upTo: 'm1', sha, override: { reason: 'the failing test is the flaky clock one; tracked in #12' } });
+  assert.deepEqual(out.overridden, ['m1']);
+  assert.equal(git('rev-parse', 'main'), sha);
+  const [entry] = q.log;
+  assert.equal(entry.kind, 'override');
+  assert.equal(entry.reason, 'the failing test is the flaky clock one; tracked in #12');
+});
+
+test("tests run on the entry merged onto the base's current tip, not on the branch alone", async () => {
+  const { repo, git, branch } = repoWithBranches();
+  const one = branch('bw/one', 'one.txt', '1\n');
+  // The user moves main on after the work was queued.
+  writeFileSync(join(repo, 'later.txt'), 'the user\'s later commit\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'the user moved on');
+  let seen = null;
+  const q = new MergeQueue({ repo, id: 't6', base: 'main', testCommand: 'x', tests: async (path) => {
+    seen = execFileSync('ls', [path], { encoding: 'utf8' }).split('\n').filter(Boolean).sort();
+    return { passed: true };
+  } });
+  q.enqueue('O1', [one]);
+  await q.build();
+  assert.deepEqual(seen, ['a.txt', 'later.txt', 'one.txt'], "the entry's file and the user's later commit, together");
+});
+
+test('a rejection needs a reason, takes the entry out, and is logged', async () => {
+  const { repo, branch } = repoWithBranches();
+  const q = new MergeQueue({ repo, id: 't7', base: 'main', tests: async () => ({ passed: true }) });
+  q.enqueue('O1', [branch('bw/one', 'one.txt', '1\n')]);
+  assert.match(q.reject('m1', '').error, /reason/);
+  assert.deepEqual(q.reject('m1', 'not what we wanted'), { rejected: 'm1', owner: 'O1' });
+  assert.equal(q.pending().length, 0);
+  assert.equal(q.log[0].kind, 'reject');
+});
