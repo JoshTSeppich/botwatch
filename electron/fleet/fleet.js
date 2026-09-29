@@ -149,7 +149,9 @@ export class Fleet extends EventEmitter {
     this.deferred = []; // wake-ups waiting for room under the cap
     this.decisions = createDecisionLog(join(dir, 'decisions.jsonl'));
     this.firstStepDefault = firstStepFloor;
-    this.firstStepSeen = 0;
+    // Largest first step seen, per role. A hypervisor plans; a worker may
+    // read five files in its first message: one says nothing of the other.
+    this.firstSeen = { hypervisor: 0, orchestrator: 0, worker: 0 };
     this.nextO = 1;
     this.nextQ = 1;
     this.nextC = 1;
@@ -179,15 +181,25 @@ export class Fleet extends EventEmitter {
     return n;
   }
 
-  // The first-step floor: the default until a first step has been seen,
-  // then the largest first step seen in this fleet, by any session.
-  get floor() {
-    return this.firstStepSeen || this.firstStepDefault;
+  // The first-step floor, per role: the larger of the default and the
+  // largest first step seen from that role. It never goes down: a smaller
+  // first step seen later lowers nothing. Each gates what that role's first
+  // step is spent from: the worker floor, what is left of a lease when a
+  // worker starts; the orchestrator floor, a lease itself; the hypervisor
+  // floor, the global budget.
+  floorFor(role) {
+    return Math.max(this.firstStepDefault, this.firstSeen[role] ?? 0);
   }
 
-  #seeFirst(session) {
+  // What a lease must be at least: its orchestrator's first step comes out
+  // of it at once.
+  get leaseFloor() {
+    return this.floorFor('orchestrator');
+  }
+
+  #seeFirst(session, role) {
     const first = session?.firstStep ?? 0;
-    if (first > this.firstStepSeen) this.firstStepSeen = first;
+    if (first > this.firstSeen[role]) this.firstSeen[role] = first;
   }
 
   get budgetExhausted() {
@@ -297,8 +309,9 @@ export class Fleet extends EventEmitter {
     // A new worker's first step has to fit in what is left.
     const lease = this.leases.get(id);
     const left = lease.tokens - lease.spent;
-    if (left < this.floor) {
-      return { ok: false, reason: `the lease has ${left.toLocaleString('en-US')} left, under the first-step floor (${this.floor.toLocaleString('en-US')}): a new session's first step could overrun it` };
+    const workerFloor = this.floorFor('worker');
+    if (left < workerFloor) {
+      return { ok: false, reason: `the lease has ${left.toLocaleString('en-US')} left, under the workers' first-step floor (${workerFloor.toLocaleString('en-US')}): a new worker's first step could overrun it` };
     }
     if (o.claim?.state !== 'granted') {
       return { ok: false, reason: o.claim ? 'your claim is waiting on a conflict the hypervisor has to resolve' : 'claim your paths with claim_paths before spawning workers' };
@@ -331,7 +344,7 @@ export class Fleet extends EventEmitter {
   }
 
   async start() {
-    if (this.budgetTokens < this.floor) return { error: `the global budget is under the first-step floor (${this.floor.toLocaleString('en-US')})` };
+    if (this.budgetTokens < this.floorFor('hypervisor')) return { error: `the global budget is under the hypervisor's first-step floor (${this.floorFor('hypervisor').toLocaleString('en-US')})` };
     const cap = underCap(this);
     if (!cap.ok) return { error: cap.reason };
     const token = newToken();
@@ -351,7 +364,7 @@ export class Fleet extends EventEmitter {
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
     this.hypervisor.on('tokens', (s, n) => {
-      this.#seeFirst(s);
+      this.#seeFirst(s, 'hypervisor');
       this.#charge('H', n);
     });
     this.hypervisor.on('change', () => {
@@ -420,12 +433,12 @@ export class Fleet extends EventEmitter {
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
     entry.session.on('tokens', (s, n) => {
-      this.#seeFirst(s);
+      this.#seeFirst(s, 'orchestrator');
       this.#charge(id, n);
     });
     // Workers' tokens go to the run's ledger; the lease is charged from it.
     run.on('tokens', (n, workerId) => {
-      this.#seeFirst(run.find?.(workerId));
+      this.#seeFirst(run.find?.(workerId), 'worker');
       this.#charge(id, n);
     });
     run.on('change', () => {
@@ -463,12 +476,12 @@ export class Fleet extends EventEmitter {
     run.gate = () => this.gate(id);
     run.workerOptions = (workerId, cwd) => this.#workerOptions(id, workerId, cwd);
     run.on('tokens', (n, workerId) => {
-      this.#seeFirst(run.find?.(workerId));
+      this.#seeFirst(run.find?.(workerId), 'worker');
       this.#charge(id, n);
     });
     run.on('toolResult', (worker) => void this.#checkClaim(id, worker));
     session?.on('tokens', (s, n) => {
-      this.#seeFirst(s);
+      this.#seeFirst(s, 'orchestrator');
       this.#charge(id, n);
     });
     this.tokens.set(token, { role: 'V3', id });

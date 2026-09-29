@@ -779,38 +779,47 @@ test('a session with no step yet has no reserve to keep', async () => {
 
 test('attack: a lease under the first-step floor is refused, by spawn and by grant', async () => {
   const { f, hv } = await started({ firstStepFloor: 22_000 });
-  assert.equal(f.floor, 22_000, 'the default, before any first step is seen');
+  assert.equal(f.leaseFloor, 22_000, 'the default, before any first step is seen');
   assert.match((await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 21_999, slots: 1, expires: 60 })).error, /first-step floor \(22,000\)/);
   assert.ok((await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 22_000, slots: 1, expires: 60 })).id);
   assert.match((await hv('grant_lease', { id: 'O1', tokens: 15_000, slots: 1, expires: 60 })).error, /first-step floor/);
 });
 
-test('the floor becomes the largest first step seen in the fleet, from any session', async () => {
+test('the floor never goes down, and is kept per role', async () => {
   const { f, hv } = await started({ firstStepFloor: 22_000 });
+  // A hypervisor's small first step lowers nothing, and says nothing of workers.
   f.hypervisor.firstStep = 12_000;
   f.hypervisor.emit('tokens', f.hypervisor, 12_000);
-  assert.equal(f.floor, 12_000, 'seen replaces the default');
-  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 30_000, slots: 2, expires: 60 });
+  assert.equal(f.floorFor('hypervisor'), 22_000);
+  assert.equal(f.floorFor('worker'), 22_000);
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 60_000, slots: 2, expires: 60 });
   const o = f.orchestrators.get('O1');
-  o.session.firstStep = 18_000;
-  o.session.emit('tokens', o.session, 18_000);
-  assert.equal(f.floor, 18_000);
+  o.session.firstStep = 25_000;
+  o.session.emit('tokens', o.session, 25_000);
+  assert.equal(f.floorFor('orchestrator'), 25_000, 'a larger first step raises its own role');
+  assert.equal(f.floorFor('worker'), 22_000, 'and only its own');
+  assert.match((await hv('grant_lease', { id: 'O1', tokens: 24_999, slots: 1, expires: 60 })).error, /25,000/);
   o.session.firstStep = 9_000;
   o.session.emit('tokens', o.session, 1);
-  assert.equal(f.floor, 18_000, 'it never goes down');
+  assert.equal(f.floorFor('orchestrator'), 25_000, 'it never goes down');
 });
 
-test("attack: no new worker when what's left of the lease is under the floor", async () => {
+test("attack: no new worker when what's left of the lease is under the workers' floor", async () => {
   const { f, hv } = await started({ firstStepFloor: 10_000 });
   await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 30_000, slots: 3, expires: 60 });
   await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
-  assert.equal((await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' })).state, 'running');
-  f.leases.get('O1').spent = 20_001;
+  const w = await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' });
+  assert.equal(w.state, 'running');
+  const worker = f.orchestrators.get('O1').run.workers[0];
+  worker.firstStep = 14_000;
+  f.orchestrators.get('O1').run.emit('tokens', 14_000, 'w1');
+  assert.equal(f.floorFor('worker'), 14_000);
+  f.leases.get('O1').spent = 16_001;
   const out = await f.callOrchestrator('O1', 'spawn_worker', { task: 'b' });
-  assert.match(out.error, /9,999 left, under the first-step floor \(10,000\)/);
+  assert.match(out.error, /13,999 left, under the workers' first-step floor \(14,000\)/);
 });
 
-test('a fleet whose global budget is under the floor does not start', async () => {
+test("a fleet whose global budget is under the hypervisor's floor does not start", async () => {
   const f = fleet({ budgetTokens: 20_000, firstStepFloor: 22_000 });
-  assert.match((await f.start()).error, /global budget is under the first-step floor/);
+  assert.match((await f.start()).error, /global budget is under the hypervisor's first-step floor/);
 });

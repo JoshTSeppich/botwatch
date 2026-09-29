@@ -366,9 +366,9 @@ async function floor() {
     await sleep(1000);
   }
   const refusals = f.hypervisor.log.items.filter((i) => i.kind === 'result' && /first-step floor/.test(i.text)).length;
-  console.log(`  info floor ${f.floor.toLocaleString()}; smallest lease ever held: ${Number.isFinite(smallest) ? smallest.toLocaleString() : 'none'}; refusals naming the floor: ${refusals}`);
+  console.log(`  info floors: hypervisor ${f.floorFor('hypervisor').toLocaleString()}, orchestrator ${f.floorFor('orchestrator').toLocaleString()}, worker ${f.floorFor('worker').toLocaleString()}; first steps seen ${JSON.stringify(f.firstSeen)}; smallest lease ever held: ${Number.isFinite(smallest) ? smallest.toLocaleString() : 'none'}; refusals naming the floor: ${refusals}`);
   check('the hypervisor tried, and pilld refused it for the floor', refusals >= 1, `${refusals} refusals`);
-  check('no lease was ever under the floor, at any sample', !Number.isFinite(smallest) || smallest >= f.floor, `smallest ${smallest}`);
+  check("no lease was ever under the orchestrators' floor, which never went below the default", (!Number.isFinite(smallest) || smallest >= f.leaseFloor) && f.leaseFloor >= 22_000, `smallest ${smallest}, floor ${f.leaseFloor}`);
   await host.close();
   control.close();
   enforcement.close();

@@ -416,10 +416,11 @@ Decisions made while building it, where the design left room:
 - The budget reserve: the enforcement hook refuses a tool call when what is left is under the
   session's largest step, and now runs on the hypervisor and orchestrators too. A session with no
   step yet has no reserve; a first step can be 10,000–21,000 tokens (measured).
-- The first-step floor: no lease grant, spawn or adoption under it, no new worker when what's left
-  of the lease is under it, no fleet whose budget is under it. `fleet.floor` is the largest first
-  step seen in the fleet, else `FIRST_STEP_DEFAULT` (22,000). Tests set `firstStepFloor: 1` when
-  they're about other rules.
+- The first-step floor, per role, never lowered: `fleet.floorFor(role)` is the larger of
+  `FIRST_STEP_DEFAULT` (22,000) and the largest first step seen from that role. The workers' floor
+  gates what must be left of a lease to start a worker; the orchestrators' (`leaseFloor`) gates
+  grants, spawns and adoption; the hypervisor's gates the global budget at start. Tests set
+  `firstStepFloor: 1` when they're about other rules.
 - `wait_for` returns when pilld pauses a worker for a claim, and `list_workers` names the paths
   (`outsideClaim`). Found in a real run: an orchestrator waited forever on its paused worker.
 

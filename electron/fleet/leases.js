@@ -32,9 +32,9 @@ export function grantable(fleet, id, { tokens, slots, expiresAt }, now = Date.no
   // The first-step floor: a session's first step has no reserve (it has
   // taken no step before it), so a lease that can't hold one could be
   // overrun by it. Refused up front instead.
-  const floor = fleet.floor ?? 0;
+  const floor = fleet.leaseFloor ?? 0;
   if (tokens < floor) {
-    return { ok: false, reason: `a lease under the first-step floor (${floor.toLocaleString('en-US')}) could be overrun by one session's first step` };
+    return { ok: false, reason: `a lease under the orchestrators' first-step floor (${floor.toLocaleString('en-US')}) could be overrun by its orchestrator's first step` };
   }
   return { ok: true };
 }
