@@ -11,6 +11,8 @@ ln -s "$root/node_modules" "$tree/node_modules"
 [ -f "$root/claude-plugin/botwatch/bin/bw-hook" ] && mkdir -p "$tree/claude-plugin/botwatch/bin" && cp "$root/claude-plugin/botwatch/bin/bw-hook" "$tree/claude-plugin/botwatch/bin/"
 (cd "$tree" && npm test >"$tree.log" 2>&1); code=$?
 grep -E "^# (pass|fail|skipped)" "$tree.log" | tr '\n' ' '; echo
+# On a failure, say which tests: a flaky one is otherwise invisible here.
+[ $code -ne 0 ] && grep -E "^ *not ok" "$tree.log" | grep -v "^not ok [0-9]* - /" | head -10
 rm -rf "$tree" "$tree.log"
 if [ $code -ne 0 ]; then echo "npm test exited $code — not committing"; exit $code; fi
 git commit -q -m "$msg" && git log --oneline -1
