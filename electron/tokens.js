@@ -68,6 +68,7 @@ export function createMeter() {
   let live = 0; // counted from messages, this process
   let total = 0; // what has been reported, never less than live
   let reported = null; // { total, live } at the last result
+  let raised = 0; // added from the transcript after an interrupted turn
   return {
     absorb(record) {
       if (!record || typeof record !== 'object') return 0;
@@ -80,13 +81,22 @@ export function createMeter() {
         return 0;
       }
       // Since the last result, only what the stream has shown on top of it.
-      const now = reported ? Math.max(live, reported.total + (live - reported.live)) : live;
+      const now = (reported ? Math.max(live, reported.total + (live - reported.live)) : live) + raised;
       const added = Math.max(0, now - total);
       total += added;
       return added;
     },
     get total() {
       return total;
+    },
+    // A reconciliation found the session spent more than the stream said
+    // (an interrupted turn never reports its final output). Adds only: the
+    // count never goes down.
+    raiseTo(truth) {
+      const added = Math.max(0, truth - total);
+      raised += added;
+      total += added;
+      return added;
     },
     // The largest single API message this session has sent, counted as the
     // stream first reported it. What one more step could cost.
@@ -99,4 +109,33 @@ export function createMeter() {
       return messages.first;
     },
   };
+}
+
+// A session's spend from its own transcripts: the main one and its
+// subagents', one count per API message at its largest sighting. What the
+// count is reconciled against after a pause or an interrupt.
+export function transcriptSpend(files, read) {
+  let total = 0;
+  for (const file of files) {
+    let text;
+    try {
+      text = read(file);
+    } catch {
+      continue;
+    }
+    const seen = new Map();
+    for (const line of text.split('\n')) {
+      if (!line.includes('"assistant"')) continue;
+      let r;
+      try {
+        r = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (r.type !== 'assistant' || !r.message?.id) continue;
+      seen.set(r.message.id, Math.max(seen.get(r.message.id) ?? 0, countUsage(r.message.usage)));
+    }
+    for (const v of seen.values()) total += v;
+  }
+  return total;
 }

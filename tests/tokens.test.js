@@ -139,3 +139,39 @@ test("the meter knows a session's first step", () => {
   assert.equal(m.firstStep, 15_410, 'the first message, at its largest sighting');
   assert.equal(createMeter().firstStep, 0);
 });
+
+test('after an interrupt the count is raised to the transcript, never lowered, and later messages still count', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'bw-reconcile-'));
+  const cwd = '/Users/x/wt';
+  const dir = join(root, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  mkdirSync(join(dir, 's1', 'subagents'), { recursive: true });
+  const line = (id, u) => `${JSON.stringify({ type: 'assistant', message: { id, usage: u } })}\n`;
+  // The stream saw m1 and m2 at their start; the transcript has their final output.
+  writeFileSync(join(dir, 's1.jsonl'), line('m1', usage(10, 1, 1_000)) + line('m1', usage(10, 900, 1_000)) + line('m2', usage(5, 700, 200)));
+  writeFileSync(join(dir, 's1', 'subagents', 'agent-a.jsonl'), line('x1', usage(5, 100, 400)));
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = root;
+  try {
+    const w = stubWorker();
+    w.cwd = cwd;
+    w.sessionId = 's1';
+    let emitted = 0;
+    w.on('tokens', (_w, t) => (emitted += t));
+    w._feed(assistant('m1', usage(10, 1, 1_000)));
+    w._feed(assistant('m2', usage(5, 1, 200)));
+    assert.equal(w.tokens, 1_217);
+    const added = w.reconcile();
+    assert.equal(added, 1_910 + 905 + 505 - 1_217, 'main and subagent transcripts, each message once');
+    assert.equal(w.tokens, 3_320);
+    assert.equal(emitted, 3_320, 'the ledger hears it as tokens');
+    assert.equal(w.reconcile(), 0, 'a second look adds nothing');
+    w._feed(assistant('m3', usage(10, 1, 300)));
+    assert.equal(w.tokens, 3_631, 'a later message still counts in full');
+  } finally {
+    if (before == null) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = before;
+  }
+});

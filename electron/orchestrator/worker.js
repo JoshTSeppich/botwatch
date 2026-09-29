@@ -10,7 +10,10 @@ import { appendLog, logEntries } from './log.js';
 import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
-import { createMeter } from '../tokens.js';
+import { createMeter, transcriptSpend } from '../tokens.js';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 
 // Turns stream-json lines into the handful of facts a worker row shows.
@@ -58,6 +61,10 @@ export function readEvent(record) {
 // Models commit by habit. Without this a worker spends tokens fighting
 // index.lock, and a determined one goes looking for a way around the sandbox.
 // Telling it plainly is cheaper than letting it find out.
+// How long after an interrupted turn ends to read its transcript: long
+// enough for Claude Code to have written the turn out.
+export const RECONCILE_DELAY_MS = 2000;
+
 export const WORKER_BRIEF = [
   'You are a BotWatch worker in a git worktree on your own branch.',
   'Do not run git commit, git add, git merge, git push, git rebase or git reset.',
@@ -165,6 +172,11 @@ export class Worker extends EventEmitter {
     });
 
     this.child.on('exit', (code) => {
+      // A stopped or killed session's last turn may be missing from the
+      // stream too; its transcript is complete now.
+      try {
+        this.reconcile();
+      } catch {}
       if (this.state !== 'stopped') this.state = code === 0 ? 'done' : 'errored';
       // A crash mid-turn never reports a finished turn, so nothing marked the
       // moment its work stopped. Marking it here is what gets that partial
@@ -183,6 +195,31 @@ export class Worker extends EventEmitter {
   // Its first step: what the v4 first-step floor is made from.
   get firstStep() {
     return this.meter.firstStep;
+  }
+
+  // Where Claude Code writes this session's transcripts.
+  transcriptFiles() {
+    if (!this.sessionId || !this.cwd) return [];
+    const root = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+    const dir = join(root, 'projects', this.cwd.replace(/[^A-Za-z0-9]/g, '-'));
+    const files = [join(dir, `${this.sessionId}.jsonl`)];
+    const subs = join(dir, this.sessionId, 'subagents');
+    if (existsSync(subs)) files.push(...readdirSync(subs).filter((f) => f.endsWith('.jsonl')).map((f) => join(subs, f)));
+    return files.filter((f) => existsSync(f));
+  }
+
+  // After a pause or an interrupt the stream has under-reported: the
+  // interrupted turn never reports its final output (measured about 9%
+  // under). The transcript has it. Raises the count to match, never lowers
+  // it, and reports what it added as tokens like any other.
+  reconcile(read = (f) => readFileSync(f, 'utf8')) {
+    const truth = transcriptSpend(this.transcriptFiles(), read);
+    const added = this.meter.raiseTo(truth);
+    if (added > 0) {
+      this.tokens += added;
+      this.emit('tokens', this, added);
+    }
+    return added;
   }
 
   // For tests: feed one stream record as if the CLI had written it.
@@ -229,6 +266,8 @@ export class Worker extends EventEmitter {
       this.emit('limits', this, this.limits);
     }
     if (event.kind === 'finished' && this.pausing) {
+      // Once the transcript has the interrupted turn, true the count up.
+      setTimeout(() => this.reconcile(), RECONCILE_DELAY_MS).unref?.();
       // The turn our interrupt ended. It reports as an error, but nothing
       // went wrong: the worker is paused, not errored, and its work is not
       // finished, so nothing is snapshotted.
