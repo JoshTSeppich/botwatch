@@ -257,11 +257,11 @@ only answers questions; it changes nothing. Both are 0600 in BotWatch's director
 
 **Machine sleep.** Leases stop while the machine sleeps (Electron's `powerMonitor` suspend and
 resume) and are extended by the time asleep on waking; the sessions were asleep too. Tested with
-emitted events and with `pmset sleepnow` in Electron (`tools/it-sleep.mjs`). With real
-`powerMonitor` events the lease was extended by exactly the time recorded asleep. **Not yet shown:**
-a sleep long enough to outlast a lease. Of three attempts, two were cancelled by keyboard input as
-they began (asleep 1s), and the one real sleep (about 6s, woken by the keyboard) came after the
-test's own lease had expired, a mistake in that version of the test, since fixed. Before this, a run that slept through an expiry saw the
+emitted events and with a real sleep in Electron (`tools/it-sleep.mjs`, `pmset sleepnow`), run
+by the user: the lease had 19.9s left at suspend (20:15:45Z); the Mac slept 27,693s (7h41m), with
+repeated maintenance DarkWakes in between; `powerMonitor` reported one suspend/resume pair; the
+lease was extended by 27,692s and had 19.8s left after resume, not expired. A lease's time is
+awake time. Before this, a run that slept through an expiry saw the
 lease expire on waking.
 
 ## Also in scope
