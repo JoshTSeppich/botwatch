@@ -472,7 +472,9 @@ export class Run extends EventEmitter {
     let released = 0;
     for (const worker of this.workers) {
       if (worker.doneAt && now - worker.doneAt > idleMs) {
-        worker.release();
+        // Optional: a stand-in in the tests has none, and the reaper fired on
+        // one whenever the suite ran past a minute.
+        worker.release?.();
         released += 1;
       }
     }
