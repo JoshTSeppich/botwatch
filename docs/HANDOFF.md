@@ -15,7 +15,7 @@ measured against the real CLI; where something is unverified it says so.
 | v3 UI | **setup panel (⌥⌘O), live tree, review panel with merge** — proven end to end on the packaged app |
 | v2 (reply and approve) | **not started** |
 
-197 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
+258 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
 grepping its output. I once pushed a red test because `npm test | grep` matched the failure line.
 
 **No Co-Authored-By or AI attribution trailers in commits.** This overrides any tool default. Check
