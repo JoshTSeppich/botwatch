@@ -29,6 +29,13 @@ export function grantable(fleet, id, { tokens, slots, expiresAt }, now = Date.no
     };
   }
   if (slots > fleet.maxSessions) return { ok: false, reason: `slots can't exceed the global session cap (${fleet.maxSessions})` };
+  // The first-step floor: a session's first step has no reserve (it has
+  // taken no step before it), so a lease that can't hold one could be
+  // overrun by it. Refused up front instead.
+  const floor = fleet.floor ?? 0;
+  if (tokens < floor) {
+    return { ok: false, reason: `a lease under the first-step floor (${floor.toLocaleString('en-US')}) could be overrun by one session's first step` };
+  }
   return { ok: true };
 }
 

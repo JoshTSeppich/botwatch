@@ -130,3 +130,12 @@ test("the meter knows a session's largest step", () => {
   m.absorb(assistant('m3', usage(10, 1, 200)));
   assert.equal(m.largestStep, 9_011);
 });
+
+test("the meter knows a session's first step", () => {
+  const m = createMeter();
+  m.absorb(assistant('m1', usage(10, 1, 15_000)));
+  m.absorb(assistant('m2', usage(10, 1, 30_000)));
+  m.absorb(assistant('m1', usage(10, 400, 15_000)));
+  assert.equal(m.firstStep, 15_410, 'the first message, at its largest sighting');
+  assert.equal(createMeter().firstStep, 0);
+});

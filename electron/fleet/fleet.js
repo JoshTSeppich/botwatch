@@ -40,6 +40,7 @@ import { MergeQueue } from './queue.js';
 
 const execFile = promisify(execFileCb);
 export const FLEETS_DIR = join(homedir(), '.claude', 'botwatch', 'fleets');
+export const FIRST_STEP_DEFAULT = 22_000;
 const STALL_MS = 5 * 60_000;
 
 export const HYPERVISOR_TOOLS = [
@@ -125,6 +126,10 @@ export class Fleet extends EventEmitter {
     now = () => Date.now(),
     session = (opts) => new Worker(opts),
     run = (opts) => new Run(opts),
+    // Until the fleet has seen a first step: the largest measured so far
+    // (21,339 tokens, a haiku worker in it-fleet-attacks overshoot, 2026-09-28),
+    // rounded up.
+    firstStepFloor = FIRST_STEP_DEFAULT,
   }) {
     super();
     Object.assign(this, { id, goals, budgetTokens, maxSessions, permissionCeiling, model, testCommand, allowInstalls, controlPath, enforcePath, dir, now });
@@ -143,6 +148,8 @@ export class Fleet extends EventEmitter {
     this.tokens = new Map(); // token -> role
     this.deferred = []; // wake-ups waiting for room under the cap
     this.decisions = createDecisionLog(join(dir, 'decisions.jsonl'));
+    this.firstStepDefault = firstStepFloor;
+    this.firstStepSeen = 0;
     this.nextO = 1;
     this.nextQ = 1;
     this.nextC = 1;
@@ -170,6 +177,17 @@ export class Fleet extends EventEmitter {
     let n = this.hypervisorSpent;
     for (const lease of this.leases.values()) n += lease.spent;
     return n;
+  }
+
+  // The first-step floor: the default until a first step has been seen,
+  // then the largest first step seen in this fleet, by any session.
+  get floor() {
+    return this.firstStepSeen || this.firstStepDefault;
+  }
+
+  #seeFirst(session) {
+    const first = session?.firstStep ?? 0;
+    if (first > this.firstStepSeen) this.firstStepSeen = first;
   }
 
   get budgetExhausted() {
@@ -276,6 +294,12 @@ export class Fleet extends EventEmitter {
     if (!o) return { ok: false, reason: `${id} is not an orchestrator of this fleet` };
     const live = leaseLive(this.leases.get(id), this.now());
     if (!live.ok) return live;
+    // A new worker's first step has to fit in what is left.
+    const lease = this.leases.get(id);
+    const left = lease.tokens - lease.spent;
+    if (left < this.floor) {
+      return { ok: false, reason: `the lease has ${left.toLocaleString('en-US')} left, under the first-step floor (${this.floor.toLocaleString('en-US')}): a new session's first step could overrun it` };
+    }
     if (o.claim?.state !== 'granted') {
       return { ok: false, reason: o.claim ? 'your claim is waiting on a conflict the hypervisor has to resolve' : 'claim your paths with claim_paths before spawning workers' };
     }
@@ -307,6 +331,7 @@ export class Fleet extends EventEmitter {
   }
 
   async start() {
+    if (this.budgetTokens < this.floor) return { error: `the global budget is under the first-step floor (${this.floor.toLocaleString('en-US')})` };
     const cap = underCap(this);
     if (!cap.ok) return { error: cap.reason };
     const token = newToken();
@@ -325,7 +350,10 @@ export class Fleet extends EventEmitter {
       brief: HYPERVISOR_BRIEF,
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
-    this.hypervisor.on('tokens', (_s, n) => this.#charge('H', n));
+    this.hypervisor.on('tokens', (s, n) => {
+      this.#seeFirst(s);
+      this.#charge('H', n);
+    });
     this.hypervisor.on('change', () => {
       this.#afterHypervisorTurn();
       // Its process ended: no new orchestrator and no new lease. The ones
@@ -391,9 +419,15 @@ export class Fleet extends EventEmitter {
       brief: FLEET_ORCHESTRATOR_BRIEF(lease.slots),
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
-    entry.session.on('tokens', (_s, n) => this.#charge(id, n));
+    entry.session.on('tokens', (s, n) => {
+      this.#seeFirst(s);
+      this.#charge(id, n);
+    });
     // Workers' tokens go to the run's ledger; the lease is charged from it.
-    run.on('tokens', (n) => this.#charge(id, n));
+    run.on('tokens', (n, workerId) => {
+      this.#seeFirst(run.find?.(workerId));
+      this.#charge(id, n);
+    });
     run.on('change', () => {
       for (const o of this.orchestrators.values()) o.run.drain?.();
       this.emit('change');
@@ -428,9 +462,15 @@ export class Fleet extends EventEmitter {
     this.orchestrators.set(id, entry);
     run.gate = () => this.gate(id);
     run.workerOptions = (workerId, cwd) => this.#workerOptions(id, workerId, cwd);
-    run.on('tokens', (n) => this.#charge(id, n));
+    run.on('tokens', (n, workerId) => {
+      this.#seeFirst(run.find?.(workerId));
+      this.#charge(id, n);
+    });
     run.on('toolResult', (worker) => void this.#checkClaim(id, worker));
-    session?.on('tokens', (_s, n) => this.#charge(id, n));
+    session?.on('tokens', (s, n) => {
+      this.#seeFirst(s);
+      this.#charge(id, n);
+    });
     this.tokens.set(token, { role: 'V3', id });
     // It declares its claim like any other orchestrator, with claim_paths,
     // which its tools now include. Until then it can't start workers.

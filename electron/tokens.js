@@ -22,7 +22,12 @@ export function countUsage(usage) {
 export function createMessageCounter() {
   const seen = new Map();
   let largest = 0;
+  let firstId = null;
   return {
+    // The session's first message, counted: its first step.
+    get first() {
+      return firstId == null ? 0 : seen.get(firstId) ?? 0;
+    },
     // The largest single message counted so far: a session's largest step.
     get largest() {
       return largest;
@@ -32,6 +37,7 @@ export function createMessageCounter() {
       const tokens = countUsage(usage);
       if (!id) return tokens;
       const before = seen.get(id) ?? 0;
+      if (firstId == null) firstId = id;
       if (tokens <= before) return 0;
       seen.set(id, tokens);
       if (tokens > largest) largest = tokens;
@@ -86,6 +92,11 @@ export function createMeter() {
     // stream first reported it. What one more step could cost.
     get largestStep() {
       return messages.largest;
+    },
+    // Its first message: the system prompt going into the cache, mostly. The
+    // one step no reserve can cover, since the session has none before it.
+    get firstStep() {
+      return messages.first;
     },
   };
 }

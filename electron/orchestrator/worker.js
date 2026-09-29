@@ -180,6 +180,11 @@ export class Worker extends EventEmitter {
     return this.meter.largestStep;
   }
 
+  // Its first step: what the v4 first-step floor is made from.
+  get firstStep() {
+    return this.meter.firstStep;
+  }
+
   // For tests: feed one stream record as if the CLI had written it.
   _feed(record) {
     this.#absorb(JSON.stringify(record));
