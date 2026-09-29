@@ -121,3 +121,12 @@ test('a turn that ends with background tasks still running is not finished', () 
   assert.equal(w.state, 'done');
   assert.ok(w.doneAt);
 });
+
+test("the meter knows a session's largest step", () => {
+  const m = createMeter();
+  m.absorb(assistant('m1', usage(10, 1, 1_000)));
+  m.absorb(assistant('m2', usage(10, 1, 9_000)));
+  m.absorb(assistant('m2', usage(10, 1, 9_000)));
+  m.absorb(assistant('m3', usage(10, 1, 200)));
+  assert.equal(m.largestStep, 9_011);
+});

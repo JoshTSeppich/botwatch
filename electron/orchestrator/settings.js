@@ -89,7 +89,12 @@ export function secretPaths(home = homedir()) {
   return SECRET_PATHS.map((p) => join(home, p));
 }
 
-export function guardSettings({ protect = [], allowInstalls = false, home = homedir() } = {}) {
+// `unreadable`: paths the session may not read at all (the hypervisor's
+// transcripts and worktrees). `denyWrites`: globs it may not write (another
+// orchestrator's claim), denied at both layers, since Write/Edit deny rules
+// also bind the Bash sandbox (measured on 2.1.282). `enforce`: the v4
+// enforcement hook, asked about every file write, fail-closed.
+export function guardSettings({ protect = [], allowInstalls = false, home = homedir(), unreadable = [], denyWrites = [], enforce = null } = {}) {
   const domains = allowInstalls ? [...BASE_DOMAINS, ...INSTALL_DOMAINS] : BASE_DOMAINS;
   const guard = scriptShellCommand(new URL('./guard.mjs', import.meta.url));
   const deny = [...DENIED_TOOLS];
@@ -97,8 +102,9 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
     // `//` is an absolute path in a permission rule.
     deny.push(`Write(/${path}/**)`, `Edit(/${path}/**)`, `NotebookEdit(/${path}/**)`);
   }
-  const secrets = secretPaths(home);
+  const secrets = [...secretPaths(home), ...unreadable];
   for (const path of secrets) deny.push(`Read(/${path})`, `Read(/${path}/**)`);
+  for (const glob of denyWrites) deny.push(`Write(/${glob})`, `Edit(/${glob})`, `NotebookEdit(/${glob})`);
   // No filesystem block here on purpose. When the cwd is a linked worktree the
   // sandbox already allows writes to the main repo's shared .git so `git
   // commit` can update the index and refs, and it already denies `hooks/` and
@@ -121,6 +127,18 @@ export function guardSettings({ protect = [], allowInstalls = false, home = home
           matcher: 'Agent|Task|Read',
           hooks: [{ type: 'command', command: `${guard} || exit 2` }],
         },
+        ...(enforce
+          ? [
+              {
+                // Every tool: a session whose pilld is gone, or whose lease
+                // isn't live, can do nothing more. Writes are also checked
+                // against the claims. Its own deadline (2s) is under this
+                // timeout: a hook that is timed out lets the call through.
+                matcher: '*',
+                hooks: [{ type: 'command', command: `${scriptShellCommand(new URL('./enforce.mjs', import.meta.url))} || exit 2`, timeout: 10 }],
+              },
+            ]
+          : []),
       ],
     },
     sandbox: {

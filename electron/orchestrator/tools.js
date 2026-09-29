@@ -80,8 +80,11 @@ export function waitFor(run, ids, until) {
     // Returns when every worker is as far as it can go on its own — or the
     // moment any one of them asks a question, so the question is not left
     // waiting on the slowest worker.
+    // ...or the moment one is paused by pilld for writing outside its claim
+    // (v4): nothing will wake it on its own, and the orchestrator decides.
+    const stuck = (w) => w?.state === 'asking' || (w?.state === 'paused' && w.claimViolations?.length);
     const settled = () =>
-      ids.some((id) => run.find(id)?.state === 'asking') ||
+      ids.some((id) => stuck(run.find(id))) ||
       ids.every((id) => {
         const worker = run.find(id);
         return !worker || worker.state === until || ['done', 'errored', 'stopped'].includes(worker.state);

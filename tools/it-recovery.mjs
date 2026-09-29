@@ -101,7 +101,11 @@ async function scenarioKilledHost() {
   check('host is gone', !alive(host.pid));
   check('ref hook left behind in the repo', existsSync(hook) && readFileSync(hook, 'utf8').includes('Installed by BotWatch'));
   const orphans = pids.filter(alive);
-  check('worker processes orphaned', orphans.length > 0, `${orphans.length} of ${pids.length} still alive`);
+  // Not a check: with pilld's end of their stdin gone, a worker exits by
+  // itself once its turn ends, so how many are still alive here depends on
+  // where their turns were. What must hold is that nothing is left after
+  // recovery (below).
+  console.log(`  info orphaned and still alive after the kill: ${orphans.length} of ${pids.length} (the rest had ended their turns and exited)`);
 
   const gone = workers.find((w) => w.id === 'w1')?.cwd;
   if (gone) rmSync(gone, { recursive: true, force: true });

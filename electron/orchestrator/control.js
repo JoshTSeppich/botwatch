@@ -11,7 +11,7 @@ import { connect, createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { call } from './tools.js';
+import { call, TOOLS } from './tools.js';
 
 export const CONTROL_PATH =
   process.env.BOTWATCH_CONTROL_SOCK || join(homedir(), '.claude', 'botwatch', 'control.sock');
@@ -68,7 +68,20 @@ async function answer(line, current, socket) {
   const live = current();
   let result;
   if (!live) result = { error: 'no orchestrator run is active in BotWatch' };
-  else if (!sameToken(request.token, live.token)) result = { error: 'not this run' };
+  else if (live.resolve) {
+    // A v4 fleet: the token says which session is calling, and so which
+    // tools it has. A token the fleet didn't issue gets nothing.
+    const role = live.resolve(String(request.token ?? ''));
+    if (!role) result = { error: 'not this run' };
+    else if (request.tool === '__list') result = { tools: role.tools };
+    else if (!role.tools.some(([name]) => name === request.tool)) result = { error: `unknown tool ${request.tool}` };
+    else {
+      result = await Promise.resolve(role.call(request.tool, request.args ?? {})).catch((err) => ({
+        error: String(err?.message ?? err),
+      }));
+    }
+  } else if (!sameToken(request.token, live.token)) result = { error: 'not this run' };
+  else if (request.tool === '__list') result = { tools: TOOLS };
   else {
     result = await call(live.run, request.tool, request.args ?? {}).catch((err) => ({
       error: String(err?.message ?? err),

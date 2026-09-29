@@ -53,11 +53,15 @@ createInterface({ input: process.stdin }).on('close', () => process.exit(0)).on(
     });
   }
   if (method === 'tools/list') {
+    // pilld says which tools this session has: a v3 orchestrator, or in a v4
+    // fleet the hypervisor or an orchestrator, by the token it was given.
+    const listed = await client.call('__list', {});
+    const tools = Array.isArray(listed?.tools) ? listed.tools : TOOLS;
     return send({
       jsonrpc: '2.0',
       id,
       result: {
-        tools: TOOLS.map(([name, description, params]) => ({
+        tools: tools.map(([name, description, params]) => ({
           name,
           description,
           inputSchema: schema(params),

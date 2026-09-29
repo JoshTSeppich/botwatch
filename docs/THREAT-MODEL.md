@@ -220,6 +220,50 @@ brief is what makes the failure clear, not npm.
 - Merged code runs later with your full permissions: `npm install` lifecycle scripts, `.envrc`, and
   anything else your tools execute from the repo.
 
+## 5. v4: a fleet of orchestrators (on `feat/v4-core`, not released)
+
+A v4 fleet adds a hypervisor session and several orchestrators, each with its own workers. The
+models decide within limits; pilld holds the limits, in code (`electron/fleet/`). Each limit of
+the design's core rule, how it is held, and whether it is **prevented** (the action can't happen)
+or **detected** (it happens, is noticed, and the session is paused):
+
+| Limit | How | Prevented or detected | Evidence |
+| --- | --- | --- | --- |
+| Leases never exceed the global budget | `grantable()` refuses any grant or spawn that would push the leases plus the hypervisor's spending over it | **Prevented** (the grant) | `fleet.test.js` attacks; `it-fleet-attacks budget` |
+| A lease's tokens, and the global budget | counted per API message; a spent lease pauses its orchestrator and workers, a spent budget pauses everything. The reserve: the enforcement hook refuses any tool call when what is left (of the lease, or of the global budget) is under the session's largest step so far, and pauses the lease | **Detected**, narrowed by the reserve: with it, nine real runs under a 20,000 lease: one ended 1,339 over, the other eight were stopped 9,218 to 9,530 under. A session's **first** step has no reserve (it has taken none), and one was 21,339 on its own | `it-fleet-attacks overshoot`; `fleet.test.js` |
+| The session cap, across every level | one gate before anything starts: hypervisor, orchestrators and workers together, checked again right before the start; and every wake-up of a session that had stopped running (a message, a nudge, an answer, a resume) goes through the cap too, deferred until there is room | **Prevented** (a start or wake-up waits instead) | `fleet.test.js`; `it-fleet-attacks cap`. The first version was breached (7 against a cap of 3) by a race around worktree creation and by wake-ups; both fixed |
+| Workers only after a claim | the gate refuses `spawn_worker` until the orchestrator's claim is granted | **Prevented** | `fleet.test.js` |
+| Another orchestrator's claim | Write/Edit/NotebookEdit deny rules for its globs, in the worker's settings at spawn; they bind the Bash sandbox too | **Prevented**, for claims granted before the worker started | `it-fleet-attacks claim` |
+| A worker's own claim, and claims made after it started | the enforcement hook (`enforce.mjs`) asks pilld on every Write/Edit, live | **Prevented** for Write/Edit | `fleet.test.js`; `it-fleet-attacks claim` |
+| The same, through Bash | a diff of the worktree after every tool call; a change outside the claim pauses the worker and is logged | **Detected, then paused**. The file exists until you review it, and a branch with it can't be queued | `it-fleet-attacks claim`: a real worker wrote `NOTES.md` by Bash, was caught and paused |
+| Merge into your branches, and push | no tool at any level merges or pushes; staging (`botwatch/staging-<fleet>`) is BotWatch's and is merged into your branch only on your click, at the exact commit built and tested (on current main with the entries before it), if the base hasn't moved. An entry whose tests failed is refused unless you override it with a reason, which is logged | **Prevented** | `fleet-rules.test.js`; `it-fleet`; `it-fleet-attacks merge` |
+| Staging conflicts | a claim is held until its entry is merged or rejected; a sequenced orchestrator starts after that and its workers fork from the updated main | **Prevented** for claimed paths: every worker branches from main | `it-fleet collide`: the second entry merged cleanly |
+| Permission above the ceiling | every session is started with `clampPermission` to the ceiling | **Prevented** | `fleet.test.js`; `it-fleet-attacks permission` |
+| An expired lease, including after the hypervisor dies | leases expire on pilld's clock (stopped while the machine sleeps); expiry pauses the orchestrator and its workers; the gate, the MCP tools and the enforcement hook (every tool call) refuse under it. With the hypervisor gone, running orchestrators carry on within their leases; no new orchestrator or lease | **Prevented** from starting anything or using a tool; the model turn in flight when it expires is spent (**detected**) | `fleet.test.js`; `it-fleet-attacks expiry` |
+| pilld killed mid-fleet | the enforcement hook refuses every tool call when pilld is unreachable; sessions exit when their turn ends (their stdin is gone); the next launch's recovery stops what is left, from the records of the hypervisor and each orchestrator | **Prevented** from running tools after the kill; the turn in flight is spent (**detected**) | `it-fleet-recovery`: nothing written in the 20s after a SIGKILL; every session ended; the user's hook, branches, uncommitted edits, worktree and own claude session untouched |
+| The hypervisor never reads worker transcripts | no tool returns one; its settings deny reading `~/.claude/projects` and the worktrees (Read tool and sandbox); it has no Bash, Write, Edit or subagents | **Prevented** | `fleet.test.js`; `it-fleet` (it used only BotWatch tools) |
+| The decision log | every answer with its level, its chain and the rule the model cited, verbatim, marked unverified | a record, not a limit: it never claims a rule was followed | `fleet.test.js` |
+
+**The enforcement hook fails closed, on every tool call of a fleet session.** It refuses when pilld is unreachable, when pilld doesn't
+answer within its own 2-second deadline (under Claude Code's 10-second hook timeout), and when it
+crashes (`… || exit 2`). Measured on the real CLI: with nobody listening, and with a server that
+never answers, the write was refused (`it-fleet-attacks unreachable`). **The gap:** if Claude Code
+itself kills the hook at its timeout (a stalled machine), the call goes through. The Bash diff and
+the settings deny still stand behind it.
+
+**The sessions' sockets.** The control socket answers only tokens the fleet issued, and each
+token sees only its role's tools (an orchestrator can't call `grant_lease`). The enforcement socket
+only answers questions; it changes nothing. Both are 0600 in BotWatch's directory.
+
+**Machine sleep.** Leases stop while the machine sleeps (Electron's `powerMonitor` suspend and
+resume) and are extended by the time asleep on waking; the sessions were asleep too. Tested with
+emitted events and with a real sleep in Electron (`tools/it-sleep.mjs`, `pmset sleepnow`), run
+by the user: the lease had 19.9s left at suspend (20:15:45Z); the Mac slept 27,693s (7h41m), with
+repeated maintenance DarkWakes in between; `powerMonitor` reported one suspend/resume pair; the
+lease was extended by 27,692s and had 19.8s left after resume, not expired. A lease's time is
+awake time. Before this, a run that slept through an expiry saw the
+lease expire on waking.
+
 ## Also in scope
 
 - **Token budget.** Counted once per API message (input + output + cache writes) as the stream
@@ -231,10 +275,10 @@ brief is what makes the failure clear, not npm.
   number: a step is whatever tool output enters the context at once, and five parallel 60KB reads
   made one step of 112,553. Since the read cap (after 0.3.2, `readcap.js`, in the fail-closed
   guard hook): one Read may bring in 32,000 bytes, and one message may make 4 Reads totalling
-  64,000 bytes. With it the largest step measured is about 11,000 tokens, the same as five
-  parallel `cat`s through Bash (Claude Code limits a Bash result) and as a session's first
-  message; a 20,000 budget with one worker reading in parallel ended 4,285 to 5,485 over, and
-  with two workers and the orchestrator 11,247 to 11,348 over (`tools/it-readcap.mjs`,
+  64,000 bytes. With it the largest step measured is 10,763 to 14,644 tokens across runs, about the
+  same as five parallel `cat`s through Bash (Claude Code limits a Bash result) and as a session's
+  first message; a 20,000 budget with one worker reading in parallel ended 4,285 to 13,576 over
+  across nine runs, and with two workers and the orchestrator 1,112 to 11,432 over (`tools/it-readcap.mjs`,
   `tools/it-pause.mjs`). The hook tells which calls share a message by the number of assistant
   messages already in the session's transcript, which is constant across one message's calls
   (measured; the payload doesn't say, and the calls run one after another). After a pause the count runs 3–5% under the transcripts (an interrupted

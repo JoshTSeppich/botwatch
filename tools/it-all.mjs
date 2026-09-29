@@ -27,6 +27,9 @@ const SCRIPTS = [
   ['it-snapshot', false],
   ['it-escape', false],
   ['it-readcap', false],
+  ['it-fleet', false],
+  ['it-fleet-attacks', false],
+  ['it-fleet-recovery', false],
 ];
 
 function scratchRepo() {
@@ -56,7 +59,9 @@ for (const [name, takesRepo] of SCRIPTS) {
   console.log(`\n=== ${name}`);
   const r = spawnSync(process.execPath, [new URL(`./${name}.mjs`, import.meta.url).pathname, ...(scratch ? [scratch.repo] : [])], {
     stdio: 'inherit',
-    timeout: 20 * 60_000,
+    // The attacks and the fleet scenarios run real multi-level fleets: well
+    // over twenty minutes, which is what the old limit cut short.
+    timeout: 120 * 60_000,
   });
   if (scratch) rmSync(scratch.root, { recursive: true, force: true });
   results.push({ name, ok: r.status === 0, status: r.status ?? r.signal, seconds: Math.round((Date.now() - started) / 1000) });

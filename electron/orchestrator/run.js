@@ -357,8 +357,15 @@ export class Run extends EventEmitter {
   // The mode the user chose in setup is what a worker gets unless the
   // orchestrator asks for less. Defaulting to 'default' instead left headless
   // workers unable to edit anything: in -p there is nobody to approve a write.
+  // v3's limits, then whatever a v4 fleet adds (lease, claim, global cap).
+  verdict() {
+    const local = policy.canSpawn(this.state, this.limits);
+    if (!local.ok || !this.gate) return local;
+    return this.gate();
+  }
+
   async spawn(task, model = this.model, permissionMode = this.permissionCeiling) {
-    const verdict = policy.canSpawn(this.state, this.limits);
+    const verdict = this.verdict();
     if (!verdict.ok && !verdict.queue) return { error: verdict.reason };
 
     const id = `w${this.nextId++}`;
@@ -375,11 +382,14 @@ export class Run extends EventEmitter {
       // business, and cwd is not a boundary.
       protect: [this.repo],
       allowInstalls: this.allowInstalls,
+      ...(this.workerOptions ? this.workerOptions(id, path) : {}),
     });
 
     worker.on('limits', (_w, limits) => this.emit('limits', limits));
+    worker.on('toolResult', (w, part) => this.emit('toolResult', w, part));
     worker.on('tokens', (_w, tokens) => {
       budget.record(this.ledger, id, tokens);
+      this.emit('tokens', tokens, id);
       if (this.budgetExhausted) this.pauseAll('budget');
       this.emit('change', this);
     });
@@ -392,7 +402,16 @@ export class Run extends EventEmitter {
     });
     this.workers.push(worker);
 
-    if (verdict.queue) {
+    // Checked again now, after the await for the worktree: other starts may
+    // have taken the room meanwhile (found by the v4 cap attack). From here
+    // to start() nothing else can run.
+    const now = verdict.queue ? verdict : this.verdict();
+    if (!now.ok && !now.queue) {
+      this.workers.pop();
+      await worktrees.remove(this.repo, path).catch(() => {});
+      return { error: now.reason };
+    }
+    if (now.queue) {
       this.queue.push(worker);
       this.emit('change', this);
       return { id, state: 'queued', branch };
@@ -413,6 +432,8 @@ export class Run extends EventEmitter {
       summary: w.summary ?? null,
       question: w.question ?? null,
       takenOver: Boolean(w.takenOver),
+      // v4: paused by pilld for changing these paths outside its claim.
+      ...(w.claimViolations?.length ? { outsideClaim: w.claimViolations } : {}),
       sessionId: w.sessionId,
     }));
   }
@@ -508,7 +529,7 @@ export class Run extends EventEmitter {
     // releasing.
     this.reap();
     let started = 0;
-    while (this.queue.length && policy.canSpawn(this.state, this.limits).ok) {
+    while (this.queue.length && this.verdict().ok) {
       this.queue.shift()?.start();
       started += 1;
     }

@@ -21,7 +21,12 @@ export function countUsage(usage) {
 // the difference.
 export function createMessageCounter() {
   const seen = new Map();
+  let largest = 0;
   return {
+    // The largest single message counted so far: a session's largest step.
+    get largest() {
+      return largest;
+    },
     // Returns the tokens this sighting adds: 0 for a repeat.
     add(id, usage) {
       const tokens = countUsage(usage);
@@ -29,6 +34,7 @@ export function createMessageCounter() {
       const before = seen.get(id) ?? 0;
       if (tokens <= before) return 0;
       seen.set(id, tokens);
+      if (tokens > largest) largest = tokens;
       return tokens - before;
     },
   };
@@ -75,6 +81,11 @@ export function createMeter() {
     },
     get total() {
       return total;
+    },
+    // The largest single API message this session has sent, counted as the
+    // stream first reported it. What one more step could cost.
+    get largestStep() {
+      return messages.largest;
     },
   };
 }

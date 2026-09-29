@@ -87,7 +87,7 @@ export function questionIn(text) {
   return match ? match[1].trim() : null;
 }
 
-export function workerArgs({ model, permissionMode, protect = [], allowInstalls = false }) {
+export function workerArgs({ model, permissionMode, protect = [], allowInstalls = false, unreadable = [], denyWrites = [], enforce = null }) {
   return [
     '-p',
     '--output-format',
@@ -102,7 +102,7 @@ export function workerArgs({ model, permissionMode, protect = [], allowInstalls 
     // The guard travels with every worker. Without it, permissionMode is the
     // only limit and a worker can merge its own branch.
     '--settings',
-    JSON.stringify(guardSettings({ protect, allowInstalls })),
+    JSON.stringify(guardSettings({ protect, allowInstalls, unreadable, denyWrites, enforce })),
     // None of the user's MCP servers: a browser, mail, docs — each a way out
     // the sandbox never sees. The orchestrator adds BotWatch's own.
     '--strict-mcp-config',
@@ -125,9 +125,12 @@ export class Worker extends EventEmitter {
     brief = WORKER_BRIEF,
     extraArgs = [],
     allowInstalls = false,
+    unreadable = [],
+    denyWrites = [],
+    enforce = null,
   }) {
     super();
-    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs, allowInstalls });
+    Object.assign(this, { id, task, cwd, branch, base, model, permissionMode, protect, gitDir, brief, extraArgs, allowInstalls, unreadable, denyWrites, enforce });
     this.state = 'queued';
     // Counted once per API message, trued up at each result: see tokens.js.
     this.meter = createMeter();
@@ -144,7 +147,11 @@ export class Worker extends EventEmitter {
     this.child = spawn('claude', args, {
       cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: guardedEnv(),
+      // A v4 session carries its identity for the enforcement hook, which
+      // inherits the CLI's environment.
+      env: this.enforce
+        ? { ...guardedEnv(), BOTWATCH_ENFORCE_SOCK: this.enforce.socket, BOTWATCH_SESSION: this.enforce.session }
+        : guardedEnv(),
     });
     this.state = 'running';
     this.message(`${this.brief}${this.allowInstalls ? '' : `\n${NO_INSTALLS}`}\n${this.task}`);
@@ -168,6 +175,11 @@ export class Worker extends EventEmitter {
     return this;
   }
 
+  // The largest step this session has taken: the budget reserve (v4).
+  get largestStep() {
+    return this.meter.largestStep;
+  }
+
   // For tests: feed one stream record as if the CLI had written it.
   _feed(record) {
     this.#absorb(JSON.stringify(record));
@@ -181,10 +193,15 @@ export class Worker extends EventEmitter {
     } catch {
       return;
     }
+    this.lastEventAt = Date.now();
     const entries = logEntries(record);
     if (entries.length) {
       appendLog(this.log, entries);
       this.emit('log', this);
+    }
+    // Each tool result, for the v4 claim check that follows a tool call.
+    if (record.type === 'user' && Array.isArray(record.message?.content)) {
+      for (const part of record.message.content) if (part.type === 'tool_result') this.emit('toolResult', this, part);
     }
     const tokens = this.meter.absorb(record);
     if (tokens) {

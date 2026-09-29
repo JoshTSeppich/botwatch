@@ -349,11 +349,86 @@ a subagent's own, so that is the key; the ledger lives in `~/.claude/botwatch/st
 
 ## v4 and v5
 
-The design is `docs/V4-V5-DESIGN.md`, with the rulings made after step 0 at its end. Step 0 is
-done (architecture read, v3 finished, Claude Code verified: see the rulings and
-THREAT-MODEL.md). **`feat/v4-core` is not started, and waits for the user to say go.** Each
-phase goes on its own branch off the previous phase's, never main, and ends with a draft PR and
-a stop.
+The design is `docs/V4-V5-DESIGN.md`, with the rulings made after step 0 at its end. Each phase
+goes on its own branch off the previous phase's, never main, and ends with a draft PR and a stop
+for the user's review. Order: v4-core, v4-pill, v5a, v5b, v5c.
+
+### v4-core (branch `feat/v4-core`): built, waiting for review
+
+The engine, with no pill UI yet (that is v4-pill). Code in `electron/fleet/`:
+
+- `fleet.js`: the Fleet. The hypervisor session, orchestrators (one per goal), their Runs, leases,
+  claims, questions, the human card queue, merge queues, health, the decision log, adoption of a
+  v3 orchestrator, and the MCP tools of both levels (`HYPERVISOR_TOOLS`, `ORCHESTRATOR_TOOLS`).
+  One `gate(id)` decides every start: stopped, hypervisor gone, global budget, a live lease, a
+  granted claim, the global session cap.
+- `leases.js`, `claims.js`, `decisions.js`, `queue.js`: the pure rules and the staging branch.
+- `host.js`: what pilld holds (like `pilot.js` for v3): the fleet, recovery records for every
+  session, and the user's actions (answer a card, build staging, the Merge click).
+- `enforce-server.js` with `electron/orchestrator/enforce.mjs`: the fail-closed enforcement hook.
+
+Changes to v3 code: a Worker can be given `unreadable`, `denyWrites` and `enforce`; a Run asks a
+`gate` and takes `workerOptions`, and re-emits tokens and tool results; the control socket routes
+by token when it serves a fleet (`resolve`), and the relay asks pilld for its tool list
+(`__list`). v3 runs behave as before.
+
+Decisions made while building it, where the design left room:
+
+- `spawn_orchestrator` takes one of the user's goals by id (its repo comes from the goal, never
+  from the model), a brief, and the first lease. `grant_lease`'s `expires` is minutes from now.
+- `list_orchestrators(wait_seconds)` is how the hypervisor waits: it returns when something it
+  would act on changes (not on token counts, which made it poll), or at the timeout.
+- `resolve_lock` decisions are `sequence`, `narrow <id> <globs>`, `give <id>`. A sequenced claim
+  is granted when the holder's orchestrator queues its work.
+- After the hypervisor dies, orchestrators already running may still start workers within their
+  leases; only a new orchestrator or a new lease is refused (the user's ruling on review).
+- `ask_human` from the hypervisor returns at once; the answer goes to every orchestrator waiting
+  on those questions. The human card queue is ranked by blocked work: the asking orchestrator plus
+  its workers that are asking, a count pilld makes.
+- A turn that ends on `QUESTION:` is relayed up (an orchestrator's to the hypervisor, the
+  hypervisor's to the user's card); a turn that stops short is nudged (orchestrators twice,
+  the hypervisor three times). Measured need: in the first real run an orchestrator asked "you"
+  in its closing text and stalled.
+- An adopted v3 orchestrator gains `claim_paths` and is asked to declare its claim like any other;
+  until it does, it can't start workers (the user's ruling on review).
+- Leases stop on system sleep and resume on wake, extended by the time asleep: the host follows
+  `powerMonitor`'s `suspend`/`resume` (pass it as `power` when wiring `main.js`), and the clock
+  stops on suspend so no tick on waking can expire a lease first. `tools/it-sleep.mjs` runs it in
+  Electron with `pmset sleepnow`; keyboard or trackpad input at that moment cancels the sleep.
+- The enforcement hook runs on **every** tool call of a fleet session, not only file writes: a real
+  SIGKILL of pilld showed orphaned workers writing on through Bash (200 files in 20s), because
+  Bash is watched by pilld's diff, which had died with it. Now every call needs a known session
+  with a live lease, so with pilld gone nothing more runs (measured: nothing written after the
+  kill). It costs one hook process per tool call.
+- The session cap covers every way a session starts running, not just spawns. The cap attack
+  reached 7 against a cap of 3: a spawn checked the cap, then awaited its worktree while others
+  passed the same check; and a done, asking or paused session ran again when sent a message, a
+  nudge, an answer or a resume. Now a spawn checks again right before it starts, and every
+  wake-up goes through `#wake`: now if there is room, otherwise when a session ends.
+- A released claim is free again (it was still denied to the next orchestrator's workers), and
+  `claim_paths` waits until the claim is granted, as it says.
+- A claim is held until its entry is merged or rejected (the user's ruling on the second review);
+  a sequenced orchestrator starts after that and forks from the updated main. Approval refuses an
+  entry whose staging tests failed unless the user overrides it with a reason (queue log and
+  decision log). Rejection needs a reason too. The host has `approve(repo, { upTo, sha, override })`
+  and `reject(repo, id, reason)` for v4-pill's buttons.
+- The budget reserve: the enforcement hook refuses a tool call when what is left is under the
+  session's largest step, and now runs on the hypervisor and orchestrators too. A session with no
+  step yet has no reserve; a first step can be 10,000–21,000 tokens (measured).
+- `wait_for` returns when pilld pauses a worker for a claim, and `list_workers` names the paths
+  (`outsideClaim`). Found in a real run: an orchestrator waited forever on its paused worker.
+
+Tests: `tests/fleet.test.js` (each core-rule limit attacked through the MCP boundary, questions,
+the log, turns, adoption, recovery records, token routing) and `tests/fleet-rules.test.js`.
+Integration: `tools/it-fleet.mjs` (`basic` end to end, and `collide`: two goals on one file
+asking one question), `tools/it-fleet-attacks.mjs` (real models, told to get around each limit),
+and `tools/it-fleet-recovery.mjs` (a real SIGKILL of the host mid-fleet, with the user's own hook,
+branch, uncommitted edits, worktree and claude session in the repo, then recovery). Run long ones under `caffeinate -i`: the first run was frozen by
+idle sleep mid-way.
+
+Open for v4-pill: the UI (setup for goals and priorities, the hypervisor row, orchestrator rows,
+the ranked card queue, the staging review and Merge), and wiring the host into `main.js` with
+`powerMonitor` and the control and enforcement sockets.
 
 ## How the code is arranged
 
