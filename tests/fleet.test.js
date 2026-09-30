@@ -823,3 +823,21 @@ test("a fleet whose global budget is under the hypervisor's floor does not start
   const f = fleet({ budgetTokens: 20_000, firstStepFloor: 22_000 });
   assert.match((await f.start()).error, /global budget is under the hypervisor's first-step floor/);
 });
+
+test('a question is on one card only: asking again with it joins the others to its card', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  const a = f.callOrchestrator('O1', 'ask_up', { question: 'Loud: !!! or !?' });
+  const b = f.callOrchestrator('O2', 'ask_up', { question: 'Loud: !!! or !?' });
+  assert.equal((await hv('ask_human', { question_ids: ['q1'], suggestion: '!!!' })).queued, 'h1');
+  const again = await hv('ask_human', { question_ids: ['q1', 'q2'], suggestion: '!!!', reason: 'duplicates' });
+  assert.equal(again.queued, 'h1');
+  assert.equal(again.joined, true);
+  const queue = f.humanQueue();
+  assert.equal(queue.length, 1, 'one card, not two');
+  assert.deepEqual(queue[0].questions, ['q1', 'q2']);
+  f.answerHuman('h1', '!!!');
+  assert.equal((await a).answer, '!!!');
+  assert.equal((await b).answer, '!!!');
+});

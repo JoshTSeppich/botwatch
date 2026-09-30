@@ -848,6 +848,24 @@ export class Fleet extends EventEmitter {
     const list = (ids ?? []).map(String);
     const missing = list.filter((q) => !this.questions.get(q) || this.questions.get(q).answered);
     if (!list.length || missing.length) return { error: `not open questions: ${missing.join(', ') || '(none given)'}` };
+    // A question is on one card at a time. If any of these is already on an
+    // open card, the others join that card rather than a second one: the
+    // user must not see the same question twice (found in a real run, where
+    // q1 went on one card alone and then on another with q2).
+    const open = this.cards.find((c) => !c.answered && list.some((q) => c.questions.includes(q)));
+    if (open) {
+      for (const q of list) {
+        // Already on this card, or on another open one: it stays where it is.
+        const current = this.cards.find((c) => !c.answered && c.questions.includes(q));
+        if (current) continue;
+        open.questions.push(q);
+        this.questions.get(q).card = open.id;
+      }
+      if (suggestion) open.suggestion = String(suggestion);
+      if (reason) open.reason = String(reason);
+      this.emit('change');
+      return { queued: open.id, joined: true, questions: open.questions, position: this.humanQueue().findIndex((c) => c.id === open.id) + 1 };
+    }
     const card = { id: `h${this.cards.length + 1}`, questions: list, suggestion: String(suggestion), reason: String(reason), at: this.now(), answered: null };
     this.cards.push(card);
     for (const q of list) this.questions.get(q).card = card.id;
