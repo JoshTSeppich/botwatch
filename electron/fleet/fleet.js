@@ -960,12 +960,14 @@ export class Fleet extends EventEmitter {
     const flags = [];
     const quiet = (s) => s?.state === 'running' && s.lastEventAt && now - s.lastEventAt > STALL_MS;
     if (quiet(o.session)) flags.push('orchestrator stalled');
+    if (o.session?.reconcileFailure) flags.push(`the orchestrator's token count may be low: ${o.session.reconcileFailure.reason}`);
     for (const w of o.run.workers) {
       if (quiet(w)) flags.push(`${w.id} stalled`);
       if (w.state === 'errored') flags.push(`${w.id} errored`);
       const last = w.log?.items.filter((i) => i.kind === 'tool').slice(-3).map((i) => i.text) ?? [];
       if (last.length === 3 && last.every((t) => t === last[0])) flags.push(`${w.id} repeating: ${last[0].slice(0, 60)}`);
       if (w.claimViolations?.length) flags.push(`${w.id} wrote outside its claim`);
+      if (w.reconcileFailure) flags.push(`${w.id}'s token count may be low: ${w.reconcileFailure.reason}`);
     }
     const done = o.run.workers.filter((w) => w.state === 'done').length;
     const lease = this.leases.get(o.id);

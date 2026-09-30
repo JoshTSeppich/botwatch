@@ -175,3 +175,75 @@ test('after an interrupt the count is raised to the transcript, never lowered, a
     else process.env.CLAUDE_CONFIG_DIR = before;
   }
 });
+
+test('a transcript that is not found is a loud reconciliation failure, not zero', async () => {
+  const w = stubWorker();
+  w.cwd = '/nowhere/at/all';
+  w.sessionId = 'missing';
+  const events = [];
+  w.on('reconcileFailed', (_w, f) => events.push(f));
+  const warn = console.warn;
+  const warned = [];
+  console.warn = (m) => warned.push(m);
+  try {
+    assert.equal(w.reconcile(), 0);
+  } finally {
+    console.warn = warn;
+  }
+  assert.match(w.reconcileFailure.reason, /no transcript found; looked in .*-nowhere-at-all.*missing\.jsonl/);
+  assert.equal(events.length, 1, 'emitted');
+  assert.match(warned[0], /could not be reconciled, and may be low/);
+});
+
+test('a /tmp cwd finds the transcript Claude Code wrote under its real path, /private/tmp', { skip: process.platform !== 'darwin' && '/tmp is a symlink on macOS' }, async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, realpathSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const cwd = mkdtempSync('/tmp/bw-realpath-');
+  const root = mkdtempSync('/tmp/bw-config-');
+  const real = realpathSync(cwd);
+  assert.notEqual(real, cwd, 'the premise: /tmp resolves elsewhere');
+  const dir = join(root, 'projects', real.replace(/[^A-Za-z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 's9.jsonl'), `${JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: usage(10, 90, 900) } })}\n`);
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = root;
+  try {
+    const w = stubWorker();
+    w.cwd = cwd;
+    w.sessionId = 's9';
+    assert.equal(w.reconcile(), 1_000);
+    assert.equal(w.reconcileFailure, null);
+  } finally {
+    if (before == null) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = before;
+  }
+});
+
+test('an error reading the transcript is loud too', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'bw-config-'));
+  const cwd = '/Users/x/wt2';
+  const dir = join(root, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 's2.jsonl'), '');
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = root;
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    const w = stubWorker();
+    w.cwd = cwd;
+    w.sessionId = 's2';
+    w.meter.raiseTo = () => {
+      throw new Error('disk gone');
+    };
+    assert.equal(w.reconcile(), 0);
+    assert.match(w.reconcileFailure.reason, /reading the transcript failed: disk gone/);
+  } finally {
+    console.warn = warn;
+    if (before == null) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = before;
+  }
+});

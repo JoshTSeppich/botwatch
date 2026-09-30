@@ -434,6 +434,8 @@ export class Run extends EventEmitter {
       takenOver: Boolean(w.takenOver),
       // v4: paused by pilld for changing these paths outside its claim.
       ...(w.claimViolations?.length ? { outsideClaim: w.claimViolations } : {}),
+      // Its token count couldn't be trued up from its transcript: it may be low.
+      ...(w.reconcileFailure ? { countMayBeLow: w.reconcileFailure.reason } : {}),
       sessionId: w.sessionId,
     }));
   }
