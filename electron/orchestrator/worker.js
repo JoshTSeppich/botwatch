@@ -10,7 +10,10 @@ import { appendLog, logEntries } from './log.js';
 import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
-import { createMeter } from '../tokens.js';
+import { createMeter, createTranscriptCounter, transcriptCounts } from '../tokens.js';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 
 // Turns stream-json lines into the handful of facts a worker row shows.
@@ -58,6 +61,12 @@ export function readEvent(record) {
 // Models commit by habit. Without this a worker spends tokens fighting
 // index.lock, and a determined one goes looking for a way around the sandbox.
 // Telling it plainly is cheaper than letting it find out.
+// How long after an interrupted turn ends to read its transcript: long
+// enough for Claude Code to have written the turn out.
+export const RECONCILE_DELAY_MS = 2000;
+// And how often, at most, while a turn is still going.
+export const RECONCILE_EVERY_MS = 5000;
+
 export const WORKER_BRIEF = [
   'You are a BotWatch worker in a git worktree on your own branch.',
   'Do not run git commit, git add, git merge, git push, git rebase or git reset.',
@@ -165,6 +174,10 @@ export class Worker extends EventEmitter {
     });
 
     this.child.on('exit', (code) => {
+      // A stopped or killed session's last turn may be missing from the
+      // stream too; its transcript is complete now. reconcile() records and
+      // logs its own failures.
+      this.reconcile();
       if (this.state !== 'stopped') this.state = code === 0 ? 'done' : 'errored';
       // A crash mid-turn never reports a finished turn, so nothing marked the
       // moment its work stopped. Marking it here is what gets that partial
@@ -178,6 +191,93 @@ export class Worker extends EventEmitter {
   // The largest step this session has taken: the budget reserve (v4).
   get largestStep() {
     return this.meter.largestStep;
+  }
+
+  // Its first step: what the v4 first-step floor is made from.
+  get firstStep() {
+    return this.meter.firstStep;
+  }
+
+  // Where Claude Code writes this session's transcripts. It names the
+  // project directory after the real path of the cwd (measured: /tmp/x is
+  // written under -private-tmp-x), so that comes first; the path as given is
+  // the fallback. Returns the files found and every place looked.
+  transcriptFiles() {
+    if (!this.sessionId || !this.cwd) return { files: [], looked: [] };
+    const root = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+    let real = this.cwd;
+    try {
+      real = realpathSync(this.cwd);
+    } catch {}
+    const looked = [];
+    for (const cwd of [...new Set([real, this.cwd])]) {
+      const dir = join(root, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+      const main = join(dir, `${this.sessionId}.jsonl`);
+      looked.push(main);
+      if (!existsSync(main)) continue;
+      const files = [main];
+      const subs = join(dir, this.sessionId, 'subagents');
+      if (existsSync(subs)) files.push(...readdirSync(subs).filter((f) => f.endsWith('.jsonl')).map((f) => join(subs, f)));
+      return { files, looked };
+    }
+    return { files: [], looked };
+  }
+
+  // After a pause or an interrupt the stream has under-reported: the
+  // interrupted turn never reports its final output (measured about 9%
+  // under). The transcript has it. Raises the count to match, never lowers
+  // it, and reports what it added as tokens like any other.
+  //
+  // A reconciliation that can't be done is loud, not zero: no transcript
+  // found, or an error reading it, is logged and recorded on the session
+  // (reconcileFailure), and emitted, because it leaves the count low.
+  reconcile(read = null) {
+    if (!this.sessionId) return 0;
+    let added = 0;
+    try {
+      const { files, looked } = this.transcriptFiles();
+      if (!files.length) {
+        this.#reconcileFailed(`no transcript found; looked in ${looked.join(', ')}`);
+        return 0;
+      }
+      const counts = read ? transcriptCounts(files, read) : this.#transcripts().counts(files);
+      added = this.meter.merge(counts);
+    } catch (err) {
+      this.#reconcileFailed(`reading the transcript failed: ${String(err?.message ?? err)}`);
+      return 0;
+    }
+    this.reconcileFailure = null;
+    if (added > 0) {
+      this.tokens += added;
+      this.emit('tokens', this, added);
+    }
+    return added;
+  }
+
+  // Reads only what each transcript gained since the last look.
+  #transcripts() {
+    if (!this.transcriptCounter) {
+      this.transcriptCounter = createTranscriptCounter({
+        size: (f) => statSync(f).size,
+        readAt: (f, offset, length) => {
+          const fd = openSync(f, 'r');
+          try {
+            const buffer = Buffer.alloc(length);
+            readSync(fd, buffer, 0, length, offset);
+            return buffer.toString('utf8');
+          } finally {
+            closeSync(fd);
+          }
+        },
+      });
+    }
+    return this.transcriptCounter;
+  }
+
+  #reconcileFailed(reason) {
+    this.reconcileFailure = { at: Date.now(), reason };
+    console.warn(`[botwatch] ${this.id}: its token count could not be reconciled, and may be low: ${reason}`);
+    this.emit('reconcileFailed', this, this.reconcileFailure);
   }
 
   // For tests: feed one stream record as if the CLI had written it.
@@ -202,6 +302,15 @@ export class Worker extends EventEmitter {
     // Each tool result, for the v4 claim check that follows a tool call.
     if (record.type === 'user' && Array.isArray(record.message?.content)) {
       for (const part of record.message.content) if (part.type === 'tool_result') this.emit('toolResult', this, part);
+      // A tool result means the message before it is finished and written
+      // out; the stream reported its output only as it began, and the turn's
+      // result (which trues it up) may be minutes away. So the count is
+      // trued up from the transcript as the turn goes, at most every few
+      // seconds.
+      if (record.message.content.some((p) => p.type === 'tool_result') && Date.now() - (this.lastReconcile ?? 0) > RECONCILE_EVERY_MS) {
+        this.lastReconcile = Date.now();
+        setTimeout(() => this.reconcile(), RECONCILE_DELAY_MS).unref?.();
+      }
     }
     const tokens = this.meter.absorb(record);
     if (tokens) {
@@ -224,6 +333,8 @@ export class Worker extends EventEmitter {
       this.emit('limits', this, this.limits);
     }
     if (event.kind === 'finished' && this.pausing) {
+      // Once the transcript has the interrupted turn, true the count up.
+      setTimeout(() => this.reconcile(), RECONCILE_DELAY_MS).unref?.();
       // The turn our interrupt ended. It reports as an error, but nothing
       // went wrong: the worker is paused, not errored, and its work is not
       // finished, so nothing is snapshotted.

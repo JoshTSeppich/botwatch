@@ -97,6 +97,8 @@ function fleet(overrides = {}) {
     now: () => clock,
     session: (opts) => new FakeSession(opts),
     run: (opts) => new FakeRun(opts),
+    // These tests are about other rules; the first-step floor has its own.
+    firstStepFloor: 1,
     ...overrides,
   });
   f.advance = (ms) => {
@@ -506,7 +508,7 @@ test("the host records the hypervisor and every orchestrator for recovery, and r
   const host = createFleetHost({ controlPath: '/tmp/unused-c.sock', enforcePath: '/tmp/unused-e.sock', runsDir });
   let pid = 90_000;
   const session = (opts) => Object.assign(new FakeSession(opts), { child: { pid: pid++ } });
-  await host.start({ id: 'rec', goals: [{ id: 'g1', goal: 'x', repo: '/r', priority: 1 }], budgetTokens: 100_000, maxSessions: 4, dir: mkdtempSync(join(tmpdir(), 'bw-fleet-')), session, run: (o) => new FakeRun(o) });
+  await host.start({ id: 'rec', goals: [{ id: 'g1', goal: 'x', repo: '/r', priority: 1 }], budgetTokens: 100_000, maxSessions: 4, dir: mkdtempSync(join(tmpdir(), 'bw-fleet-')), session, run: (o) => new FakeRun(o), firstStepFloor: 1 });
   await host.fleet.callHypervisor('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 1, expires: 60 });
   await new Promise((r) => setTimeout(r, 700));
   const dirs = readdirSync(runsDir).sort();
@@ -545,7 +547,7 @@ test("the host follows the power monitor's suspend and resume", async () => {
   const { createFleetHost } = await import('../electron/fleet/host.js');
   const power = new EventEmitter();
   const host = createFleetHost({ controlPath: '/tmp/u-c.sock', enforcePath: '/tmp/u-e.sock', runsDir: mkdtempSync(join(tmpdir(), 'bw-runs-')), power });
-  await host.start({ id: 'pw', goals: [{ id: 'g1', goal: 'x', repo: '/r', priority: 1 }], budgetTokens: 100_000, maxSessions: 4, dir: mkdtempSync(join(tmpdir(), 'bw-fleet-')), session: (o) => new FakeSession(o), run: (o) => new FakeRun(o) });
+  await host.start({ id: 'pw', goals: [{ id: 'g1', goal: 'x', repo: '/r', priority: 1 }], budgetTokens: 100_000, maxSessions: 4, dir: mkdtempSync(join(tmpdir(), 'bw-fleet-')), session: (o) => new FakeSession(o), run: (o) => new FakeRun(o), firstStepFloor: 1 });
   power.emit('suspend');
   assert.notEqual(host.fleet.suspendedAt, null);
   power.emit('resume');
@@ -771,4 +773,71 @@ test('a session with no step yet has no reserve to keep', async () => {
   await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 20_000, slots: 2, expires: 60 });
   f.leases.get('O1').spent = 19_999;
   assert.equal(f.mayUse('O1').ok, true);
+});
+
+// ---- the first-step floor ---------------------------------------------------------
+
+test('attack: a lease under the first-step floor is refused, by spawn and by grant', async () => {
+  const { f, hv } = await started({ firstStepFloor: 22_000 });
+  assert.equal(f.leaseFloor, 22_000, 'the default, before any first step is seen');
+  assert.match((await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 21_999, slots: 1, expires: 60 })).error, /first-step floor \(22,000\)/);
+  assert.ok((await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 22_000, slots: 1, expires: 60 })).id);
+  assert.match((await hv('grant_lease', { id: 'O1', tokens: 15_000, slots: 1, expires: 60 })).error, /first-step floor/);
+});
+
+test('the floor never goes down, and is kept per role', async () => {
+  const { f, hv } = await started({ firstStepFloor: 22_000 });
+  // A hypervisor's small first step lowers nothing, and says nothing of workers.
+  f.hypervisor.firstStep = 12_000;
+  f.hypervisor.emit('tokens', f.hypervisor, 12_000);
+  assert.equal(f.floorFor('hypervisor'), 22_000);
+  assert.equal(f.floorFor('worker'), 22_000);
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 60_000, slots: 2, expires: 60 });
+  const o = f.orchestrators.get('O1');
+  o.session.firstStep = 25_000;
+  o.session.emit('tokens', o.session, 25_000);
+  assert.equal(f.floorFor('orchestrator'), 25_000, 'a larger first step raises its own role');
+  assert.equal(f.floorFor('worker'), 22_000, 'and only its own');
+  assert.match((await hv('grant_lease', { id: 'O1', tokens: 24_999, slots: 1, expires: 60 })).error, /25,000/);
+  o.session.firstStep = 9_000;
+  o.session.emit('tokens', o.session, 1);
+  assert.equal(f.floorFor('orchestrator'), 25_000, 'it never goes down');
+});
+
+test("attack: no new worker when what's left of the lease is under the workers' floor", async () => {
+  const { f, hv } = await started({ firstStepFloor: 10_000 });
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 30_000, slots: 3, expires: 60 });
+  await f.callOrchestrator('O1', 'claim_paths', { paths: ['src/**'] });
+  const w = await f.callOrchestrator('O1', 'spawn_worker', { task: 'a' });
+  assert.equal(w.state, 'running');
+  const worker = f.orchestrators.get('O1').run.workers[0];
+  worker.firstStep = 14_000;
+  f.orchestrators.get('O1').run.emit('tokens', 14_000, 'w1');
+  assert.equal(f.floorFor('worker'), 14_000);
+  f.leases.get('O1').spent = 16_001;
+  const out = await f.callOrchestrator('O1', 'spawn_worker', { task: 'b' });
+  assert.match(out.error, /13,999 left, under the workers' first-step floor \(14,000\)/);
+});
+
+test("a fleet whose global budget is under the hypervisor's floor does not start", async () => {
+  const f = fleet({ budgetTokens: 20_000, firstStepFloor: 22_000 });
+  assert.match((await f.start()).error, /global budget is under the hypervisor's first-step floor/);
+});
+
+test('a question is on one card only: asking again with it joins the others to its card', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  await hv('spawn_orchestrator', { goal: 'g2', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  const a = f.callOrchestrator('O1', 'ask_up', { question: 'Loud: !!! or !?' });
+  const b = f.callOrchestrator('O2', 'ask_up', { question: 'Loud: !!! or !?' });
+  assert.equal((await hv('ask_human', { question_ids: ['q1'], suggestion: '!!!' })).queued, 'h1');
+  const again = await hv('ask_human', { question_ids: ['q1', 'q2'], suggestion: '!!!', reason: 'duplicates' });
+  assert.equal(again.queued, 'h1');
+  assert.equal(again.joined, true);
+  const queue = f.humanQueue();
+  assert.equal(queue.length, 1, 'one card, not two');
+  assert.deepEqual(queue[0].questions, ['q1', 'q2']);
+  f.answerHuman('h1', '!!!');
+  assert.equal((await a).answer, '!!!');
+  assert.equal((await b).answer, '!!!');
 });

@@ -66,7 +66,7 @@ const stamp = (t) => new Date(t).toISOString();
 app.whenReady().then(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bw-it-sleep-'));
   const host = createFleetHost({ controlPath: join(dir, 'c.sock'), enforcePath: join(dir, 'e.sock'), runsDir: join(dir, 'runs'), power: powerMonitor });
-  await host.start({ id: 'sleep', goals: [{ id: 'g1', goal: 'x', repo: dir, priority: 1 }], budgetTokens: 100_000, maxSessions: 3, dir: join(dir, 'fleet'), session: (o) => new Idle(o), run: (o) => new StandInRun(o) });
+  await host.start({ id: 'sleep', goals: [{ id: 'g1', goal: 'x', repo: dir, priority: 1 }], budgetTokens: 100_000, maxSessions: 3, dir: join(dir, 'fleet'), session: (o) => new Idle(o), run: (o) => new StandInRun(o), firstStepFloor: 1 });
   const fleet = host.fleet;
   // The lease outlasts the lead-in by 20 seconds: any sleep longer than
   // that would expire it on waking, were the time asleep counted.

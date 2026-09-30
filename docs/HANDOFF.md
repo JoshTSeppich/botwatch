@@ -15,7 +15,8 @@ measured against the real CLI; where something is unverified it says so.
 | v3 UI | **setup panel (⌥⌘O), live tree, review panel with merge** — proven end to end on the packaged app |
 | v2 (reply and approve) | **not started** |
 
-197 tests. `npm test` must exit 0 before any commit — gate on the exit code, never on
+258 tests. Commit with `sh tools/gated-commit.sh "<message>"` (it tests exactly what is staged).
+`npm test` must exit 0 before any commit — gate on the exit code, never on
 grepping its output. I once pushed a red test because `npm test | grep` matched the failure line.
 
 **No Co-Authored-By or AI attribution trailers in commits.** This overrides any tool default. Check
@@ -415,6 +416,11 @@ Decisions made while building it, where the design left room:
 - The budget reserve: the enforcement hook refuses a tool call when what is left is under the
   session's largest step, and now runs on the hypervisor and orchestrators too. A session with no
   step yet has no reserve; a first step can be 10,000–21,000 tokens (measured).
+- The first-step floor, per role, never lowered: `fleet.floorFor(role)` is the larger of
+  `FIRST_STEP_DEFAULT` (22,000) and the largest first step seen from that role. The workers' floor
+  gates what must be left of a lease to start a worker; the orchestrators' (`leaseFloor`) gates
+  grants, spawns and adoption; the hypervisor's gates the global budget at start. Tests set
+  `firstStepFloor: 1` when they're about other rules.
 - `wait_for` returns when pilld pauses a worker for a claim, and `list_workers` names the paths
   (`outsideClaim`). Found in a real run: an orchestrator waited forever on its paused worker.
 

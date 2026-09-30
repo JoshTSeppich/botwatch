@@ -434,6 +434,8 @@ export class Run extends EventEmitter {
       takenOver: Boolean(w.takenOver),
       // v4: paused by pilld for changing these paths outside its claim.
       ...(w.claimViolations?.length ? { outsideClaim: w.claimViolations } : {}),
+      // Its token count couldn't be trued up from its transcript: it may be low.
+      ...(w.reconcileFailure ? { countMayBeLow: w.reconcileFailure.reason } : {}),
       sessionId: w.sessionId,
     }));
   }
@@ -472,7 +474,9 @@ export class Run extends EventEmitter {
     let released = 0;
     for (const worker of this.workers) {
       if (worker.doneAt && now - worker.doneAt > idleMs) {
-        worker.release();
+        // Optional: a stand-in in the tests has none, and the reaper fired on
+        // one whenever the suite ran past a minute.
+        worker.release?.();
         released += 1;
       }
     }
