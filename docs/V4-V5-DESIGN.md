@@ -89,3 +89,24 @@ Decided after measuring the current Claude Code. The numbers behind them are in 
 - **Can a step be bounded by design? Not yet**, so the first-step floor and the reserve stay **narrowed**, not prevented. A first step is mostly the prompt prefix going into the cache, and its size depends on whether that prefix is already cached: cold (the first session of a batch), 21,328 written and 0 read, counted 21,339 to 21,570; warm, 10,860 read (not counted) and about 10,460 written, counted about 10,500 (15 worker first steps, `it-fleet-attacks overshoot`, 2026-09-28 and 29). What has no limit: the memory files loaded into it (the repo's CLAUDE.md and its imports, the user's), the task or brief text, the message's output (BotWatch sets no output limit), and Claude Code's own prompt and tool schemas, which change by version. Later steps are unbounded too: only Reads are capped per message; parallel Bash results, Grep and Glob output, MCP results and subagent reports are not. A bound would need all of these capped or measured at spawn.
 - **Counts after a pause.** An interrupted turn never reports its final output to the stream (a run showed the count 9% under). After any pause or interrupt, and when a session's process exits, its count is raised to its transcripts (one count per message id at its largest). Counts only go up. Measured: counted equals the transcripts in all three runs after the change (12,690, 12,768, 12,903).
 
+## The lease contract (ruled 2026-09-30; not yet implemented, see docs/V4-LEASE-REPORTS.md)
+
+**Immutable at grant:** id, holder, goal, granted tokens, granted awake time, slots, the accounting rules (which token types count and at what weight, and what awake time means), the contract version, and the parent (v5).
+
+**Mutable only as:**
+- counters that only increase: spent, awake time used, steps, largest step;
+- append-only credits (sleep, downtime) and amendments (raises within the global budget, never below spent);
+- a state machine (active, paused(reason), expired, released, revoked) with legal transitions only.
+
+**Remaining is derived, never stored:** granted + amendments + credits − spent. A lease must be rebuildable from its event log after a crash.
+
+**Permissions:**
+- the holder spends, releases and requests;
+- the hypervisor grants, amends and sequences;
+- pilld counts, credits and pauses;
+- only the user revokes.
+
+**Safety enforcement may tighten mid-lease, never loosen. Budget terms never change mid-lease.**
+
+**Lease time** means awake, running time, not wall-clock time: system sleep is credited back (measured: a lease with 19.9s left slept 7h41m and woke with 19.8s left). A hard wall-clock deadline, if ever needed, is a separate field that is never extended. It isn't built.
+
