@@ -120,6 +120,10 @@ export function createPilot({ onChange = () => {}, controlPath = CONTROL_PATH } 
       onChange();
     });
     run.on('change', () => {
+      // A spent budget pauses the orchestrator too, whoever spent it: a
+      // worker tripping it used to pause only the workers, leaving the
+      // orchestrator running mid-turn and its count unreconciled.
+      if (run.budgetExhausted && orchestrator.state === 'running') orchestrator.pause();
       record();
       onChange();
     });

@@ -139,3 +139,44 @@ export function transcriptSpend(files, read) {
   }
   return total;
 }
+
+// The same count, read incrementally: only what was appended to each file
+// since the last look, and a half-written last line waits. For truing a
+// session's count up while its turn is still going, which happens often.
+export function createTranscriptCounter({ open, size, readAt }) {
+  const state = new Map(); // file -> { offset, seen: Map }
+  return {
+    total(files) {
+      let total = 0;
+      for (const file of files) {
+        let st = state.get(file);
+        if (!st) state.set(file, (st = { offset: 0, seen: new Map() }));
+        const length = size(file);
+        if (length < st.offset) {
+          st.offset = 0;
+          st.seen = new Map();
+        }
+        if (length > st.offset) {
+          const text = readAt(file, st.offset, length - st.offset);
+          const cut = text.lastIndexOf('\n');
+          if (cut !== -1) {
+            for (const line of text.slice(0, cut).split('\n')) {
+              if (!line.includes('"assistant"')) continue;
+              let r;
+              try {
+                r = JSON.parse(line);
+              } catch {
+                continue;
+              }
+              if (r.type !== 'assistant' || !r.message?.id) continue;
+              st.seen.set(r.message.id, Math.max(st.seen.get(r.message.id) ?? 0, countUsage(r.message.usage)));
+            }
+            st.offset += Buffer.byteLength(text.slice(0, cut + 1), 'utf8');
+          }
+        }
+        for (const v of st.seen.values()) total += v;
+      }
+      return total;
+    },
+  };
+}

@@ -10,8 +10,8 @@ import { appendLog, logEntries } from './log.js';
 import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
-import { createMeter, transcriptSpend } from '../tokens.js';
-import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { createMeter, createTranscriptCounter, transcriptSpend } from '../tokens.js';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -64,6 +64,8 @@ export function readEvent(record) {
 // How long after an interrupted turn ends to read its transcript: long
 // enough for Claude Code to have written the turn out.
 export const RECONCILE_DELAY_MS = 2000;
+// And how often, at most, while a turn is still going.
+export const RECONCILE_EVERY_MS = 5000;
 
 export const WORKER_BRIEF = [
   'You are a BotWatch worker in a git worktree on your own branch.',
@@ -229,7 +231,7 @@ export class Worker extends EventEmitter {
   // A reconciliation that can't be done is loud, not zero: no transcript
   // found, or an error reading it, is logged and recorded on the session
   // (reconcileFailure), and emitted, because it leaves the count low.
-  reconcile(read = (f) => readFileSync(f, 'utf8')) {
+  reconcile(read = null) {
     if (!this.sessionId) return 0;
     let added = 0;
     try {
@@ -238,7 +240,8 @@ export class Worker extends EventEmitter {
         this.#reconcileFailed(`no transcript found; looked in ${looked.join(', ')}`);
         return 0;
       }
-      added = this.meter.raiseTo(transcriptSpend(files, read));
+      const truth = read ? transcriptSpend(files, read) : this.#transcripts().total(files);
+      added = this.meter.raiseTo(truth);
     } catch (err) {
       this.#reconcileFailed(`reading the transcript failed: ${String(err?.message ?? err)}`);
       return 0;
@@ -249,6 +252,26 @@ export class Worker extends EventEmitter {
       this.emit('tokens', this, added);
     }
     return added;
+  }
+
+  // Reads only what each transcript gained since the last look.
+  #transcripts() {
+    if (!this.transcriptCounter) {
+      this.transcriptCounter = createTranscriptCounter({
+        size: (f) => statSync(f).size,
+        readAt: (f, offset, length) => {
+          const fd = openSync(f, 'r');
+          try {
+            const buffer = Buffer.alloc(length);
+            readSync(fd, buffer, 0, length, offset);
+            return buffer.toString('utf8');
+          } finally {
+            closeSync(fd);
+          }
+        },
+      });
+    }
+    return this.transcriptCounter;
   }
 
   #reconcileFailed(reason) {
@@ -279,6 +302,15 @@ export class Worker extends EventEmitter {
     // Each tool result, for the v4 claim check that follows a tool call.
     if (record.type === 'user' && Array.isArray(record.message?.content)) {
       for (const part of record.message.content) if (part.type === 'tool_result') this.emit('toolResult', this, part);
+      // A tool result means the message before it is finished and written
+      // out; the stream reported its output only as it began, and the turn's
+      // result (which trues it up) may be minutes away. So the count is
+      // trued up from the transcript as the turn goes, at most every few
+      // seconds.
+      if (record.message.content.some((p) => p.type === 'tool_result') && Date.now() - (this.lastReconcile ?? 0) > RECONCILE_EVERY_MS) {
+        this.lastReconcile = Date.now();
+        setTimeout(() => this.reconcile(), RECONCILE_DELAY_MS).unref?.();
+      }
     }
     const tokens = this.meter.absorb(record);
     if (tokens) {

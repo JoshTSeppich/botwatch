@@ -140,8 +140,15 @@ async function scenarioBudget() {
   // output, so the count runs a little under (3–5% measured). Finished turns
   // match the transcripts exactly (it-snapshot.mjs).
   check('counted within 6% of the transcripts, never over', run.ledger.spent <= truth && (truth - run.ledger.spent) / truth < 0.06, `counted ${run.ledger.spent.toLocaleString()}, transcripts ${truth.toLocaleString()}`);
+  // Reconciliation runs once each interrupted turn has ended and been
+  // written out, which is after the pause: look again once it has.
+  await sleep(10_000);
+  const truthLater = spentIn(orchestratorDir) + run.workers.reduce((n, w) => n + (w.cwd ? spentIn(w.cwd) : 0), 0);
+  const failures = [...run.workers].filter((w) => w.reconcileFailure).map((w) => `${w.id}: ${w.reconcileFailure.reason}`);
+  check('ten seconds later, reconciled: counted equals the transcripts', run.ledger.spent === truthLater, `counted ${run.ledger.spent.toLocaleString()}, transcripts ${truthLater.toLocaleString()}${failures.length ? `; failures: ${failures.join('; ')}` : ''}`);
   console.log(`  info overshoot past the ${BUDGET.toLocaleString()} budget: ${(truth - BUDGET).toLocaleString()} tokens (${run.workers.length} workers + the orchestrator)`);
   check('the run paused itself', run.paused && run.pauseReason === 'budget');
+  check('the orchestrator was paused too, whoever spent the budget', pilot.view().orchestrator.state === 'paused', pilot.view().orchestrator.state);
   check('Resume is refused', /budget is spent/.test(pilot.resumeAll().error ?? ''));
   const raised = pilot.raiseBudget(500_000);
   check('+500k raises it', raised.limit === BUDGET + 500_000, JSON.stringify(raised));

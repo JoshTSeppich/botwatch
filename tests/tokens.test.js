@@ -247,3 +247,24 @@ test('an error reading the transcript is loud too', async () => {
     else process.env.CLAUDE_CONFIG_DIR = before;
   }
 });
+
+test('the incremental transcript counter reads only what was appended, and matches a full read', async () => {
+  const { createTranscriptCounter, transcriptSpend } = await import('../electron/tokens.js');
+  const files = { a: '' };
+  let read = 0;
+  const counter = createTranscriptCounter({
+    size: (f) => Buffer.byteLength(files[f]),
+    readAt: (f, offset, length) => {
+      read += length;
+      return Buffer.from(files[f]).subarray(offset, offset + length).toString('utf8');
+    },
+  });
+  const line = (id, u) => `${JSON.stringify({ type: 'assistant', message: { id, usage: u } })}\n`;
+  files.a = line('m1', usage(10, 1, 100));
+  assert.equal(counter.total(['a']), 111);
+  const firstRead = read;
+  files.a += line('m1', usage(10, 50, 100)) + line('m2', usage(5, 5, 5)) + '{"type":"assis';
+  assert.equal(counter.total(['a']), 160 + 15, 'm1 at its largest, m2 once, a half-written line waits');
+  assert.ok(read - firstRead < Buffer.byteLength(files.a), 'only the appended bytes were read');
+  assert.equal(counter.total(['a']), transcriptSpend(['a'], (f) => files[f].slice(0, files[f].lastIndexOf('\n') + 1)));
+});
