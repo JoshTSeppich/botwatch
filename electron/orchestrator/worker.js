@@ -10,7 +10,7 @@ import { appendLog, logEntries } from './log.js';
 import { phrase, plain } from './phrase.js';
 import { guardSettings } from './settings.js';
 import { guardedEnv } from './refguard.js';
-import { createMeter, createTranscriptCounter, transcriptSpend } from '../tokens.js';
+import { createMeter, createTranscriptCounter, transcriptCounts } from '../tokens.js';
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -240,8 +240,8 @@ export class Worker extends EventEmitter {
         this.#reconcileFailed(`no transcript found; looked in ${looked.join(', ')}`);
         return 0;
       }
-      const truth = read ? transcriptSpend(files, read) : this.#transcripts().total(files);
-      added = this.meter.raiseTo(truth);
+      const counts = read ? transcriptCounts(files, read) : this.#transcripts().counts(files);
+      added = this.meter.merge(counts);
     } catch (err) {
       this.#reconcileFailed(`reading the transcript failed: ${String(err?.message ?? err)}`);
       return 0;

@@ -236,7 +236,7 @@ test('an error reading the transcript is loud too', async () => {
     const w = stubWorker();
     w.cwd = cwd;
     w.sessionId = 's2';
-    w.meter.raiseTo = () => {
+    w.meter.merge = () => {
       throw new Error('disk gone');
     };
     assert.equal(w.reconcile(), 0);
@@ -267,4 +267,27 @@ test('the incremental transcript counter reads only what was appended, and match
   assert.equal(counter.total(['a']), 160 + 15, 'm1 at its largest, m2 once, a half-written line waits');
   assert.ok(read - firstRead < Buffer.byteLength(files.a), 'only the appended bytes were read');
   assert.equal(counter.total(['a']), transcriptSpend(['a'], (f) => files[f].slice(0, files[f].lastIndexOf('\n') + 1)));
+});
+
+test('a message reconciled mid-turn is not counted again when the turn\'s result arrives', () => {
+  const m = createMeter();
+  // The stream: two messages, output as they began.
+  m.absorb(assistant('m1', usage(10, 1, 1_000)));
+  m.absorb(assistant('m2', usage(10, 1, 500)));
+  assert.equal(m.total, 1_522);
+  // Mid-turn, the transcript has m1 finished.
+  assert.equal(m.merge(new Map([['m1', 1_400]])), 389);
+  assert.equal(m.total, 1_911);
+  // The turn's result: the session's own total, both messages finished.
+  const added = m.absorb({ type: 'result', modelUsage: { x: { inputTokens: 20, outputTokens: 480, cacheCreationInputTokens: 1_500 } } });
+  assert.equal(m.total, 2_000, 'the result, not the result plus what was reconciled');
+  assert.equal(added, 89);
+  // After the result, a reconciliation of the same messages adds nothing,
+  m.merge(new Map([['m1', 1_400], ['m2', 600]]));
+  assert.equal(m.total, 2_000);
+  // and a new message counts on top.
+  m.absorb(assistant('m3', usage(5, 1, 100)));
+  assert.equal(m.total, 2_106);
+  m.merge(new Map([['m3', 300]]));
+  assert.equal(m.total, 2_300, 'a new message, reconciled, counts once at its largest');
 });
