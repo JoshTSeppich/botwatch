@@ -89,7 +89,7 @@ export const HYPERVISOR_BRIEF = [
   'The goals, with the user\'s priority (1 is highest):',
 ].join('\n');
 
-export const FLEET_ORCHESTRATOR_BRIEF = (slots) =>
+export const FLEET_ORCHESTRATOR_BRIEF = (slots, project = null) =>
   [
     'You are a BotWatch orchestrator under a hypervisor. Your only tools are the botwatch MCP tools.',
     'First plan, then call claim_paths with the repo paths your workers will change. You cannot spawn workers before your claim is granted.',
@@ -102,9 +102,41 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots) =>
     'Call report with a short summary after each milestone. If your lease runs low, call request_lease with a reason.',
     'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker. Your claim stays held until the user merges or rejects your entry.',
     'You cannot edit files, run commands or merge.',
+    "Each worker sees only its own branch, forked from the base. The merge queue builds all your branches together on the current base and runs the test command on that: a worker whose work depends on other workers' branches can't test the combination, and doesn't need to. Tell it so in its task.",
+    "Workers cannot commit, and must not be told to: pilld commits each worker's tree when its turn ends, with the message the worker writes after a line 'COMMIT:'. Where the repository says how commits are written, ask for that in the worker's COMMIT: message, not for git commands.",
+    ...(project
+      ? [
+          '',
+          `The repository's own instructions, its CLAUDE.md at ${project.ref}. Your workers read them in their worktrees. Plan the work and write their tasks so they can follow them:`,
+          '',
+          project.text,
+        ]
+      : []),
     '',
     'Your brief from the hypervisor:',
   ].join('\n');
+
+// A repository's CLAUDE.md as committed at HEAD, for an orchestrator, which
+// runs outside the repository and so never loads it. From the commit, not the
+// working tree: nothing uncommitted, and nothing a worker wrote, reaches it.
+// Workers whose work an enqueue would leave out without being told to: still
+// going, asking, paused, errored, or finished without a snapshot. A stopped
+// worker was left out on purpose, and a taken-over one belongs to the user.
+export function unqueuable(workers = []) {
+  return workers
+    .filter((w) => !w.takenOver && w.state !== 'stopped' && !(w.state === 'done' && w.snapshot?.sha))
+    .map((w) => (w.state === 'asking' ? `${w.id} is asking${w.question ? ` ("${String(w.question).slice(0, 200)}")` : ''}` : `${w.id} is ${w.state === 'done' ? 'done but not snapshotted yet' : w.state}`));
+}
+
+export const PROJECT_INSTRUCTIONS_MAX = 32 * 1024;
+
+export async function projectInstructions(repo) {
+  const ref = await execFile('git', ['-C', repo, 'rev-parse', '--short', 'HEAD']).then((r) => r.stdout.trim(), () => null);
+  if (!ref) return null;
+  const text = await execFile('git', ['-C', repo, 'show', `${ref}:CLAUDE.md`], { maxBuffer: 4 * PROJECT_INSTRUCTIONS_MAX }).then((r) => r.stdout.trim(), () => '');
+  if (!text) return null;
+  return { ref, text: text.length > PROJECT_INSTRUCTIONS_MAX ? `${text.slice(0, PROJECT_INSTRUCTIONS_MAX)}\n[cut at ${PROJECT_INSTRUCTIONS_MAX.toLocaleString('en-US')} characters]` : text };
+}
 
 function minutes(n) {
   return Number(n) * 60_000;
@@ -126,6 +158,7 @@ export class Fleet extends EventEmitter {
     now = () => Date.now(),
     session = (opts) => new Worker(opts),
     run = (opts) => new Run(opts),
+    instructions = projectInstructions,
     // Until the fleet has seen a first step: the largest measured so far
     // (21,339 tokens, a haiku worker in it-fleet-attacks overshoot, 2026-09-28),
     // rounded up.
@@ -135,6 +168,7 @@ export class Fleet extends EventEmitter {
     Object.assign(this, { id, goals, budgetTokens, maxSessions, permissionCeiling, model, testCommand, allowInstalls, controlPath, enforcePath, dir, now });
     this.makeSession = session;
     this.makeRun = run;
+    this.projectInstructions = instructions;
     this.hypervisor = null;
     this.hypervisorSpent = 0;
     this.hypervisorGone = false;
@@ -429,7 +463,7 @@ export class Fleet extends EventEmitter {
       permissionMode: clampPermission('default', this.permissionCeiling),
       protect: [goal.repo],
       enforce: this.enforcePath ? { socket: this.enforcePath, session: id } : null,
-      brief: FLEET_ORCHESTRATOR_BRIEF(lease.slots),
+      brief: FLEET_ORCHESTRATOR_BRIEF(lease.slots, await this.projectInstructions(goal.repo)),
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
     entry.session.on('tokens', (s, n) => {
@@ -902,6 +936,7 @@ export class Fleet extends EventEmitter {
 
   // ---- merge queue -----------------------------------------------------------
 
+
   queueFor(repo) {
     if (!this.queues.has(repo)) {
       this.queues.set(repo, new MergeQueue({ repo, id: this.id, base: this.orchestratorsFor(repo)[0]?.run.workers[0]?.base ?? 'main', testCommand: this.testCommand }));
@@ -916,6 +951,12 @@ export class Fleet extends EventEmitter {
   async enqueue(id) {
     const o = this.orchestrators.get(id);
     await o.run.resnapshotAll?.();
+    // Every worker's work is queued or deliberately left out, never dropped
+    // without a word. Measured: a worker ended its turn on a question after
+    // writing the shared index; enqueue took the other eight, the orchestrator
+    // reported all nine queued, and the merged result exported nothing.
+    const held = unqueuable(o.run.workers);
+    if (held.length) return { error: `not queued: ${held.join('; ')}. Answer or fix it with message_worker and wait_for it, or stop_worker it to leave its work out, then enqueue_merge again` };
     const ready = o.run.workers.filter((w) => w.state === 'done' && w.snapshot?.sha && !w.takenOver);
     // A branch with changes outside the claim never reaches the queue.
     const branches = [];

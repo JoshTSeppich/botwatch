@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import * as budget from '../electron/orchestrator/budget.js';
 import * as policy from '../electron/orchestrator/policy.js';
 import { branchName, uniqueBranch, worktreePath } from '../electron/orchestrator/worktrees.js';
-import { readEvent, workerArgs, WORKER_BRIEF } from '../electron/orchestrator/worker.js';
+import { commitMessageIn, COMMIT_MESSAGE_MAX, readEvent, Worker, workerArgs, WORKER_BRIEF } from '../electron/orchestrator/worker.js';
 import { Run, snapshotMessage } from '../electron/orchestrator/run.js';
 import { guardedEnv } from '../electron/orchestrator/refguard.js';
 import { guardSettings } from '../electron/orchestrator/settings.js';
@@ -307,7 +307,7 @@ test("Claude Code's own credentials file is denied to the Read tool and the shel
 
 test('a worker is told plainly that committing is not its job', () => {
   assert.match(WORKER_BRIEF, /Do not run git commit/);
-  assert.match(WORKER_BRIEF, /BotWatch snapshots your working tree/);
+  assert.match(WORKER_BRIEF, /BotWatch commits your working tree/);
   assert.match(WORKER_BRIEF, /git status and git diff are fine/);
 });
 
@@ -342,6 +342,58 @@ test('a snapshot commit reads like a commit, not like a prompt', () => {
   assert.equal(msg.includes('\n'), false);
   assert.ok(msg.length <= 80, `subject should stay short, was ${msg.length}`);
   assert.equal(msg.includes('Then run git status'), false, 'only the first sentence');
+});
+
+test("a worker's commit message is what follows its last COMMIT: line", () => {
+  assert.equal(commitMessageIn('Done, all tests pass.'), null);
+  assert.equal(commitMessageIn(''), null);
+  assert.equal(commitMessageIn('Done.\nCOMMIT:   \n'), null, 'an empty message is none');
+  assert.equal(commitMessageIn('Done.\nCOMMIT: fix(parse): accept a leading v'), 'fix(parse): accept a leading v');
+  assert.equal(
+    commitMessageIn('Summary.\n\nCOMMIT:\ngreen(T1): add swap\n\nSelf-check:\nQ1 [KNOWN] read the spec.'),
+    'green(T1): add swap\n\nSelf-check:\nQ1 [KNOWN] read the spec.',
+  );
+  assert.equal(commitMessageIn('COMMIT:\n```\nfeat: x\n\nbody\n```'), 'feat: x\n\nbody', 'a fence around it is not part of it');
+  assert.equal(commitMessageIn('COMMIT: first try\nthen more work\nCOMMIT: second'), 'second', 'the last one counts');
+  assert.equal(commitMessageIn(`COMMIT: x\n${'y'.repeat(COMMIT_MESSAGE_MAX * 2)}`).length, COMMIT_MESSAGE_MAX);
+});
+
+test('the worker brief asks for a commit message in the repository\'s own conventions', () => {
+  assert.match(WORKER_BRIEF, /COMMIT:/);
+  assert.match(WORKER_BRIEF, /CLAUDE\.md/);
+  assert.match(WORKER_BRIEF, /Do not run git commit/, 'pilld still commits, not the worker');
+});
+
+test("a finished turn's last words are kept, for its commit message", () => {
+  const w = new Worker({ id: 'w1', task: 't', cwd: '/tmp', model: 'haiku', permissionMode: 'default' });
+  w.state = 'running';
+  w._feed({ type: 'result', result: 'Done.\nCOMMIT: feat: y' });
+  assert.equal(w.state, 'done');
+  assert.equal(commitMessageIn(w.result), 'feat: y');
+});
+
+test("a snapshot commits with the worker's message, or a subject from its task without one", async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'bw-msg-'));
+  const git = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+  const run = new Run({ repo: dir, goal: 'x', model: 'haiku' });
+  const worker = { id: 'w1', branch: 'main', cwd: dir, task: 'Add swap. Then test it.', result: 'Done.\nCOMMIT: green(T1): add swap\n\nQ1 [KNOWN] yes' };
+  run.workers = [worker];
+  writeFileSync(join(dir, 'a.js'), '1');
+  assert.deepEqual(await run.commitWorktree('main'), { committed: true });
+  assert.equal(git('log', '-1', '--format=%B'), 'green(T1): add swap\n\nQ1 [KNOWN] yes');
+  assert.match(git('log', '-1', '--format=%an'), /BotWatch \(w1\)/, 'still authored as the worker, committed by pilld');
+  worker.result = 'Done, no message.';
+  writeFileSync(join(dir, 'b.js'), '2');
+  await run.commitWorktree('main');
+  assert.equal(git('log', '-1', '--format=%B'), 'botwatch(w1): Add swap');
 });
 
 test('files nobody should be merging are recognised by name', () => {

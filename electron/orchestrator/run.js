@@ -21,7 +21,7 @@ import { forkPoint, review } from './review.js';
 import { runTests } from './testrun.js';
 import { guardSettings } from './settings.js';
 import * as worktrees from './worktrees.js';
-import { Worker } from './worker.js';
+import { commitMessageIn, Worker } from './worker.js';
 
 const TERMINAL = new Set(['done', 'errored', 'stopped']);
 
@@ -163,6 +163,7 @@ export class Run extends EventEmitter {
     await execFile('git', ['-C', worker.cwd, 'add', '-A']);
     // Author is the worker, committer is the user. pilld does the committing,
     // but it did not write the code, and `git blame` should not say it did.
+    // The message is the worker's own when its turn ended with one.
     await execFile('git', [
       '-C',
       worker.cwd,
@@ -170,7 +171,7 @@ export class Run extends EventEmitter {
       '--author',
       `BotWatch (${worker.id ?? 'worker'}) <botwatch@localhost>`,
       '-m',
-      snapshotMessage(worker),
+      commitMessageIn(worker.result) ?? snapshotMessage(worker),
     ]);
     return { committed: true };
   }

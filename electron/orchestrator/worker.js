@@ -71,7 +71,10 @@ export const WORKER_BRIEF = [
   'You are a BotWatch worker in a git worktree on your own branch.',
   'Do not run git commit, git add, git merge, git push, git rebase or git reset.',
   'You cannot commit: the repository is read-only to you and the attempt will fail.',
-  'BotWatch snapshots your working tree to your branch when you finish. Just edit files.',
+  'BotWatch commits your working tree to your branch when you finish. Just edit files.',
+  "End your final message with a line starting 'COMMIT:' and the commit message after it: a subject",
+  "line, then a blank line and a body. Write it the way this repository asks (its CLAUDE.md, if it",
+  'has one). BotWatch commits with it; without one it writes a subject from your task.',
   'git status and git diff are fine, and are how you check your own work.',
   'Keep shell commands plain: single commands and pipes run without asking, but loops and $(…)',
   'substitutions are refused here, because nobody is present to approve them.',
@@ -89,6 +92,25 @@ export const NO_INSTALLS = [
   "done without installing something, don't work around it: end your turn with 'QUESTION:' naming",
   'the package and why, so the user can rerun with installs allowed.',
 ].join('\n');
+
+// A worker's commit message: everything after the last line starting
+// "COMMIT:", without a code fence around it. Null when there is none or it is
+// empty. pilld still makes the commit; this only says what it is called, so a
+// repository's own commit conventions reach a fleet's history.
+export const COMMIT_MESSAGE_MAX = 16 * 1024;
+
+export function commitMessageIn(text) {
+  const lines = String(text ?? '').split('\n');
+  const at = lines.findLastIndex((line) => /^\s*COMMIT:/.test(line));
+  if (at < 0) return null;
+  const message = [lines[at].replace(/^\s*COMMIT:\s*/, ''), ...lines.slice(at + 1)]
+    .join('\n')
+    .trim()
+    .replace(/^```[^\n]*\n/, '')
+    .replace(/\n?```$/, '')
+    .trim();
+  return message ? message.slice(0, COMMIT_MESSAGE_MAX) : null;
+}
 
 // The worker's own words after "QUESTION:", or null.
 export function questionIn(text) {
@@ -355,6 +377,8 @@ export class Worker extends EventEmitter {
       // A turn that ends on a question is not finished work: nothing is
       // snapshotted, it cannot merge, and the orchestrator is told.
       this.question = event.error ? null : questionIn(event.result);
+      // The turn's last words, which carry its commit message.
+      this.result = event.error ? null : (event.result ?? null);
       this.state = event.error ? 'errored' : this.question ? 'asking' : 'done';
       // The process stays alive and answerable after its turn, which is how
       // message_worker works at all. It also means a finished worker is a live

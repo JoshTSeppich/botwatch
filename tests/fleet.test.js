@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { Fleet, HYPERVISOR_TOOLS, ORCHESTRATOR_TOOLS } from '../electron/fleet/fleet.js';
+import { Fleet, FLEET_ORCHESTRATOR_BRIEF, HYPERVISOR_TOOLS, ORCHESTRATOR_TOOLS, PROJECT_INSTRUCTIONS_MAX, projectInstructions, unqueuable } from '../electron/fleet/fleet.js';
 
 class FakeSession extends EventEmitter {
   constructor(opts) {
@@ -99,6 +99,8 @@ function fleet(overrides = {}) {
     run: (opts) => new FakeRun(opts),
     // These tests are about other rules; the first-step floor has its own.
     firstStepFloor: 1,
+    // No repository behind these goals: no CLAUDE.md, unless a test gives one.
+    instructions: async () => null,
     ...overrides,
   });
   f.advance = (ms) => {
@@ -840,4 +842,94 @@ test('a question is on one card only: asking again with it joins the others to i
   f.answerHuman('h1', '!!!');
   assert.equal((await a).answer, '!!!');
   assert.equal((await b).answer, '!!!');
+});
+
+// ---- the repository's own instructions reach its orchestrator ------------------
+
+test("an orchestrator's brief carries its repository's CLAUDE.md, and only its own", async () => {
+  const seen = [];
+  const { f, hv } = await started({ instructions: async (repo) => (seen.push(repo), { ref: 'abc1234', text: '# Uses cairn\nEvery claim carries a label.' }) });
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'theme work', tokens: 10_000, slots: 2, expires: 60 });
+  const o = f.orchestrators.get('O1');
+  assert.deepEqual(seen, ['/r']);
+  assert.match(o.session.brief, /CLAUDE\.md at abc1234/);
+  assert.match(o.session.brief, /Every claim carries a label\./);
+  assert.ok(o.session.brief.indexOf('Every claim') < o.session.brief.indexOf('Your brief from the hypervisor:'), 'before the hypervisor\'s brief, which follows it');
+  assert.equal(f.hypervisor.brief.includes('Every claim'), false, 'the hypervisor reads summaries, not repositories');
+});
+
+test('an orchestrator is told workers cannot commit, and where commit conventions go instead', () => {
+  // Measured: an orchestrator that read a CLAUDE.md asking for commits told
+  // every worker to run git add and git commit, which their own brief forbids;
+  // one refused and the question went up to the user.
+  const brief = FLEET_ORCHESTRATOR_BRIEF(2);
+  assert.match(brief, /Workers cannot commit, and must not be told to/);
+  assert.match(brief, /COMMIT:/);
+});
+
+test('an orchestrator is told where the combined work is tested', () => {
+  // Measured: a worker that wrote the shared index couldn't run the suite
+  // without the other branches, asked instead of finishing, and the question
+  // of how to build a combined tree went up to the hypervisor, which can't.
+  assert.match(FLEET_ORCHESTRATOR_BRIEF(2), /merge queue builds all your branches together/);
+});
+
+test('without a CLAUDE.md the orchestrator brief is unchanged', () => {
+  assert.equal(FLEET_ORCHESTRATOR_BRIEF(2, null), FLEET_ORCHESTRATOR_BRIEF(2));
+  assert.equal(FLEET_ORCHESTRATOR_BRIEF(2).includes('CLAUDE.md'), false);
+});
+
+test("a repository's instructions are read from its commit, not its working tree", async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'bw-claude-md-'));
+  const git = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+  assert.equal(await projectInstructions(dir), null, 'none committed');
+  writeFileSync(join(dir, 'CLAUDE.md'), 'committed rules\n');
+  git('add', 'CLAUDE.md');
+  git('commit', '-q', '-m', 'rules');
+  writeFileSync(join(dir, 'CLAUDE.md'), 'uncommitted rules\n');
+  const got = await projectInstructions(dir);
+  assert.equal(got.text, 'committed rules');
+  assert.equal(got.ref, git('rev-parse', '--short', 'HEAD'));
+  writeFileSync(join(dir, 'CLAUDE.md'), 'x'.repeat(PROJECT_INSTRUCTIONS_MAX + 10));
+  git('commit', '-q', '-am', 'long');
+  assert.match((await projectInstructions(dir)).text, /\[cut at /);
+  assert.equal(await projectInstructions(join(dir, 'missing')), null, 'not a repository');
+});
+
+// ---- nothing is dropped from the queue without a word ---------------------------
+
+test('enqueue refuses while a worker is asking, and names it, instead of leaving its work out', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  const o = f.orchestrators.get('O1');
+  o.run.workers.push(
+    Object.assign(new EventEmitter(), { id: 'w1', state: 'done', snapshot: { sha: 'a1' }, branch: 'bw/w1', base: 'main' }),
+    Object.assign(new EventEmitter(), { id: 'w9', state: 'asking', question: 'The suite cannot run here. Verify it?', branch: 'bw/w9', base: 'main' }),
+  );
+  const out = await f.callOrchestrator('O1', 'enqueue_merge', {});
+  assert.match(out.error, /w9 is asking \("The suite cannot run here/);
+  assert.match(out.error, /stop_worker it to leave its work out/);
+  assert.equal(o.finished, false, 'nothing was queued');
+  assert.equal(f.queues.get('/r')?.pending().length ?? 0, 0);
+});
+
+test('a stopped or taken-over worker is left out on purpose; anything unfinished is named', () => {
+  assert.deepEqual(unqueuable([
+    { id: 'w1', state: 'done', snapshot: { sha: 'a' } },
+    { id: 'w2', state: 'stopped' },
+    { id: 'w3', state: 'running', takenOver: true },
+  ]), []);
+  assert.deepEqual(unqueuable([
+    { id: 'w4', state: 'running' },
+    { id: 'w5', state: 'paused' },
+    { id: 'w6', state: 'errored' },
+    { id: 'w7', state: 'done' },
+    { id: 'w8', state: 'asking' },
+  ]), ['w4 is running', 'w5 is paused', 'w6 is errored', 'w7 is done but not snapshotted yet', 'w8 is asking']);
 });
