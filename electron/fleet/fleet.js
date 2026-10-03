@@ -102,6 +102,7 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots, project = null) =>
     'Call report with a short summary after each milestone. If your lease runs low, call request_lease with a reason.',
     'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker. Your claim stays held until the user merges or rejects your entry.',
     'You cannot edit files, run commands or merge.',
+    "Each worker sees only its own branch, forked from the base. The merge queue builds all your branches together on the current base and runs the test command on that: a worker whose work depends on other workers' branches can't test the combination, and doesn't need to. Tell it so in its task.",
     "Workers cannot commit, and must not be told to: pilld commits each worker's tree when its turn ends, with the message the worker writes after a line 'COMMIT:'. Where the repository says how commits are written, ask for that in the worker's COMMIT: message, not for git commands.",
     ...(project
       ? [
@@ -118,6 +119,15 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots, project = null) =>
 // A repository's CLAUDE.md as committed at HEAD, for an orchestrator, which
 // runs outside the repository and so never loads it. From the commit, not the
 // working tree: nothing uncommitted, and nothing a worker wrote, reaches it.
+// Workers whose work an enqueue would leave out without being told to: still
+// going, asking, paused, errored, or finished without a snapshot. A stopped
+// worker was left out on purpose, and a taken-over one belongs to the user.
+export function unqueuable(workers = []) {
+  return workers
+    .filter((w) => !w.takenOver && w.state !== 'stopped' && !(w.state === 'done' && w.snapshot?.sha))
+    .map((w) => (w.state === 'asking' ? `${w.id} is asking${w.question ? ` ("${String(w.question).slice(0, 200)}")` : ''}` : `${w.id} is ${w.state === 'done' ? 'done but not snapshotted yet' : w.state}`));
+}
+
 export const PROJECT_INSTRUCTIONS_MAX = 32 * 1024;
 
 export async function projectInstructions(repo) {
@@ -926,6 +936,7 @@ export class Fleet extends EventEmitter {
 
   // ---- merge queue -----------------------------------------------------------
 
+
   queueFor(repo) {
     if (!this.queues.has(repo)) {
       this.queues.set(repo, new MergeQueue({ repo, id: this.id, base: this.orchestratorsFor(repo)[0]?.run.workers[0]?.base ?? 'main', testCommand: this.testCommand }));
@@ -940,6 +951,12 @@ export class Fleet extends EventEmitter {
   async enqueue(id) {
     const o = this.orchestrators.get(id);
     await o.run.resnapshotAll?.();
+    // Every worker's work is queued or deliberately left out, never dropped
+    // without a word. Measured: a worker ended its turn on a question after
+    // writing the shared index; enqueue took the other eight, the orchestrator
+    // reported all nine queued, and the merged result exported nothing.
+    const held = unqueuable(o.run.workers);
+    if (held.length) return { error: `not queued: ${held.join('; ')}. Answer or fix it with message_worker and wait_for it, or stop_worker it to leave its work out, then enqueue_merge again` };
     const ready = o.run.workers.filter((w) => w.state === 'done' && w.snapshot?.sha && !w.takenOver);
     // A branch with changes outside the claim never reaches the queue.
     const branches = [];

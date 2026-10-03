@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { Fleet, FLEET_ORCHESTRATOR_BRIEF, HYPERVISOR_TOOLS, ORCHESTRATOR_TOOLS, PROJECT_INSTRUCTIONS_MAX, projectInstructions } from '../electron/fleet/fleet.js';
+import { Fleet, FLEET_ORCHESTRATOR_BRIEF, HYPERVISOR_TOOLS, ORCHESTRATOR_TOOLS, PROJECT_INSTRUCTIONS_MAX, projectInstructions, unqueuable } from '../electron/fleet/fleet.js';
 
 class FakeSession extends EventEmitter {
   constructor(opts) {
@@ -867,6 +867,13 @@ test('an orchestrator is told workers cannot commit, and where commit convention
   assert.match(brief, /COMMIT:/);
 });
 
+test('an orchestrator is told where the combined work is tested', () => {
+  // Measured: a worker that wrote the shared index couldn't run the suite
+  // without the other branches, asked instead of finishing, and the question
+  // of how to build a combined tree went up to the hypervisor, which can't.
+  assert.match(FLEET_ORCHESTRATOR_BRIEF(2), /merge queue builds all your branches together/);
+});
+
 test('without a CLAUDE.md the orchestrator brief is unchanged', () => {
   assert.equal(FLEET_ORCHESTRATOR_BRIEF(2, null), FLEET_ORCHESTRATOR_BRIEF(2));
   assert.equal(FLEET_ORCHESTRATOR_BRIEF(2).includes('CLAUDE.md'), false);
@@ -893,4 +900,36 @@ test("a repository's instructions are read from its commit, not its working tree
   git('commit', '-q', '-am', 'long');
   assert.match((await projectInstructions(dir)).text, /\[cut at /);
   assert.equal(await projectInstructions(join(dir, 'missing')), null, 'not a repository');
+});
+
+// ---- nothing is dropped from the queue without a word ---------------------------
+
+test('enqueue refuses while a worker is asking, and names it, instead of leaving its work out', async () => {
+  const { f, hv } = await started();
+  await hv('spawn_orchestrator', { goal: 'g1', brief: 'b', tokens: 10_000, slots: 2, expires: 60 });
+  const o = f.orchestrators.get('O1');
+  o.run.workers.push(
+    Object.assign(new EventEmitter(), { id: 'w1', state: 'done', snapshot: { sha: 'a1' }, branch: 'bw/w1', base: 'main' }),
+    Object.assign(new EventEmitter(), { id: 'w9', state: 'asking', question: 'The suite cannot run here. Verify it?', branch: 'bw/w9', base: 'main' }),
+  );
+  const out = await f.callOrchestrator('O1', 'enqueue_merge', {});
+  assert.match(out.error, /w9 is asking \("The suite cannot run here/);
+  assert.match(out.error, /stop_worker it to leave its work out/);
+  assert.equal(o.finished, false, 'nothing was queued');
+  assert.equal(f.queues.get('/r')?.pending().length ?? 0, 0);
+});
+
+test('a stopped or taken-over worker is left out on purpose; anything unfinished is named', () => {
+  assert.deepEqual(unqueuable([
+    { id: 'w1', state: 'done', snapshot: { sha: 'a' } },
+    { id: 'w2', state: 'stopped' },
+    { id: 'w3', state: 'running', takenOver: true },
+  ]), []);
+  assert.deepEqual(unqueuable([
+    { id: 'w4', state: 'running' },
+    { id: 'w5', state: 'paused' },
+    { id: 'w6', state: 'errored' },
+    { id: 'w7', state: 'done' },
+    { id: 'w8', state: 'asking' },
+  ]), ['w4 is running', 'w5 is paused', 'w6 is errored', 'w7 is done but not snapshotted yet', 'w8 is asking']);
 });
