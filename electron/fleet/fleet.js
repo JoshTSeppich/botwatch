@@ -89,7 +89,7 @@ export const HYPERVISOR_BRIEF = [
   'The goals, with the user\'s priority (1 is highest):',
 ].join('\n');
 
-export const FLEET_ORCHESTRATOR_BRIEF = (slots) =>
+export const FLEET_ORCHESTRATOR_BRIEF = (slots, project = null) =>
   [
     'You are a BotWatch orchestrator under a hypervisor. Your only tools are the botwatch MCP tools.',
     'First plan, then call claim_paths with the repo paths your workers will change. You cannot spawn workers before your claim is granted.',
@@ -102,9 +102,30 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots) =>
     'Call report with a short summary after each milestone. If your lease runs low, call request_lease with a reason.',
     'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker. Your claim stays held until the user merges or rejects your entry.',
     'You cannot edit files, run commands or merge.',
+    ...(project
+      ? [
+          '',
+          `The repository's own instructions, its CLAUDE.md at ${project.ref}. Your workers read them in their worktrees. Plan the work and write their tasks so they can follow them:`,
+          '',
+          project.text,
+        ]
+      : []),
     '',
     'Your brief from the hypervisor:',
   ].join('\n');
+
+// A repository's CLAUDE.md as committed at HEAD, for an orchestrator, which
+// runs outside the repository and so never loads it. From the commit, not the
+// working tree: nothing uncommitted, and nothing a worker wrote, reaches it.
+export const PROJECT_INSTRUCTIONS_MAX = 32 * 1024;
+
+export async function projectInstructions(repo) {
+  const ref = await execFile('git', ['-C', repo, 'rev-parse', '--short', 'HEAD']).then((r) => r.stdout.trim(), () => null);
+  if (!ref) return null;
+  const text = await execFile('git', ['-C', repo, 'show', `${ref}:CLAUDE.md`], { maxBuffer: 4 * PROJECT_INSTRUCTIONS_MAX }).then((r) => r.stdout.trim(), () => '');
+  if (!text) return null;
+  return { ref, text: text.length > PROJECT_INSTRUCTIONS_MAX ? `${text.slice(0, PROJECT_INSTRUCTIONS_MAX)}\n[cut at ${PROJECT_INSTRUCTIONS_MAX.toLocaleString('en-US')} characters]` : text };
+}
 
 function minutes(n) {
   return Number(n) * 60_000;
@@ -126,6 +147,7 @@ export class Fleet extends EventEmitter {
     now = () => Date.now(),
     session = (opts) => new Worker(opts),
     run = (opts) => new Run(opts),
+    instructions = projectInstructions,
     // Until the fleet has seen a first step: the largest measured so far
     // (21,339 tokens, a haiku worker in it-fleet-attacks overshoot, 2026-09-28),
     // rounded up.
@@ -135,6 +157,7 @@ export class Fleet extends EventEmitter {
     Object.assign(this, { id, goals, budgetTokens, maxSessions, permissionCeiling, model, testCommand, allowInstalls, controlPath, enforcePath, dir, now });
     this.makeSession = session;
     this.makeRun = run;
+    this.projectInstructions = instructions;
     this.hypervisor = null;
     this.hypervisorSpent = 0;
     this.hypervisorGone = false;
@@ -429,7 +452,7 @@ export class Fleet extends EventEmitter {
       permissionMode: clampPermission('default', this.permissionCeiling),
       protect: [goal.repo],
       enforce: this.enforcePath ? { socket: this.enforcePath, session: id } : null,
-      brief: FLEET_ORCHESTRATOR_BRIEF(lease.slots),
+      brief: FLEET_ORCHESTRATOR_BRIEF(lease.slots, await this.projectInstructions(goal.repo)),
       extraArgs: ['--mcp-config', await this.#mcpConfig(dir, token), '--allowedTools', 'mcp__botwatch', '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,Agent,Task'],
     });
     entry.session.on('tokens', (s, n) => {

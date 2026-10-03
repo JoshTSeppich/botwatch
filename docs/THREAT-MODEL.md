@@ -251,6 +251,17 @@ never answers, the write was refused (`it-fleet-attacks unreachable`). **The gap
 itself kills the hook at its timeout (a stalled machine), the call goes through. The Bash diff and
 the settings deny still stand behind it.
 
+**A repository's own conventions.**
+- **The orchestrator reads the repository's CLAUDE.md.** An orchestrator runs outside the repository, so pilld adds the repository's CLAUDE.md to its brief. pilld reads it from the committed `HEAD`, never the working tree, so nothing uncommitted and nothing a worker wrote reaches the orchestrator. It is cut at 32 KiB.
+- **Each worker names its own commit.** Its turn ends with a `COMMIT:` block, and pilld commits the snapshot with that message (cut at 16 KiB, passed as one argument, no shell). Without one, the message falls back to `botwatch(wN): <task>`.
+
+Both are text a model reads or writes, so they inform the work and limit nothing. Every limit in the table above holds whatever a CLAUDE.md or a commit message says:
+- the orchestrator's tools are the same;
+- a worker still can't commit;
+- pilld makes every commit, authored as the worker.
+
+The hypervisor doesn't get any repository's CLAUDE.md: it reads summaries only.
+
 **The sessions' sockets.** The control socket answers only tokens the fleet issued, and each
 token sees only its role's tools (an orchestrator can't call `grant_lease`). The enforcement socket
 only answers questions; it changes nothing. Both are 0600 in BotWatch's directory.
