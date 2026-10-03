@@ -858,6 +858,15 @@ test("an orchestrator's brief carries its repository's CLAUDE.md, and only its o
   assert.equal(f.hypervisor.brief.includes('Every claim'), false, 'the hypervisor reads summaries, not repositories');
 });
 
+test('an orchestrator is told workers cannot commit, and where commit conventions go instead', () => {
+  // Measured: an orchestrator that read a CLAUDE.md asking for commits told
+  // every worker to run git add and git commit, which their own brief forbids;
+  // one refused and the question went up to the user.
+  const brief = FLEET_ORCHESTRATOR_BRIEF(2);
+  assert.match(brief, /Workers cannot commit, and must not be told to/);
+  assert.match(brief, /COMMIT:/);
+});
+
 test('without a CLAUDE.md the orchestrator brief is unchanged', () => {
   assert.equal(FLEET_ORCHESTRATOR_BRIEF(2, null), FLEET_ORCHESTRATOR_BRIEF(2));
   assert.equal(FLEET_ORCHESTRATOR_BRIEF(2).includes('CLAUDE.md'), false);

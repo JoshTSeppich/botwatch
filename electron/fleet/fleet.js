@@ -102,6 +102,7 @@ export const FLEET_ORCHESTRATOR_BRIEF = (slots, project = null) =>
     'Call report with a short summary after each milestone. If your lease runs low, call request_lease with a reason.',
     'When the work is done and checked, call enqueue_merge, then report, then finish with one line per worker. Your claim stays held until the user merges or rejects your entry.',
     'You cannot edit files, run commands or merge.',
+    "Workers cannot commit, and must not be told to: pilld commits each worker's tree when its turn ends, with the message the worker writes after a line 'COMMIT:'. Where the repository says how commits are written, ask for that in the worker's COMMIT: message, not for git commands.",
     ...(project
       ? [
           '',
